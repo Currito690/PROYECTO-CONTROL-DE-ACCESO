@@ -159,7 +159,14 @@ const app = {
 
 
   async init() {
-    if (!isAdmin) this.state.activeView = 'attendance';
+    if (!isAdmin) {
+      this.state.activeView = 'attendance';
+      // Ocultar nav items que solo son para admin
+      ['dashboard', 'users', 'logs', 'manage-ferias'].forEach(view => {
+        const el = document.querySelector(`[data-view="${view}"]`);
+        if (el) el.style.display = 'none';
+      });
+    }
 
     this.setupGlobalListeners();
     this.injectModal();
@@ -324,7 +331,6 @@ const app = {
 
   async switchView(view) {
     if (!isAdmin && (view === 'dashboard' || view === 'users' || view === 'logs' || view === 'manage-ferias')) {
-      alert('Acceso denegado. Se requiere nivel de administrador.');
       return;
     }
 
