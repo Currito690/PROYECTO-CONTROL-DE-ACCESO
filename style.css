@@ -357,6 +357,8 @@ td {
   font-size: 0.875rem;
   outline: none;
   transition: border-color 0.2s;
+  color: var(--text-main);
+  background-color: var(--bg-card);
 }
 
 .input-field:focus {
@@ -370,6 +372,16 @@ select.input-field {
   background-repeat: no-repeat;
   background-position: right 0.75rem center;
   background-size: 1rem;
+  cursor: pointer;
+}
+
+select.input-field option {
+  color: var(--text-main);
+  background-color: white;
+}
+
+select.input-field option[value=""][disabled] {
+  color: var(--text-muted);
 }
 
 /* Attendance & Calendar */
