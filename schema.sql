@@ -27,6 +27,7 @@ INSERT INTO ferias (name, start_date, end_date, location) VALUES
 CREATE TABLE IF NOT EXISTS time_logs (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) NOT NULL,
+  feria_id UUID REFERENCES ferias(id) ON DELETE SET NULL,
   action_type TEXT NOT NULL CHECK (action_type IN ('Entrada', 'Salida')),
   timestamp TIMESTAMPTZ DEFAULT NOW(),
   latitude NUMERIC,
@@ -35,9 +36,13 @@ CREATE TABLE IF NOT EXISTS time_logs (
 
 -- Habilitar RLS en Registros de Fichaje
 ALTER TABLE time_logs ENABLE ROW LEVEL SECURITY;
--- Los usuarios pueden leer y crear sus propios registros (y los admin pueden ver todos)
+-- Todos pueden ver sus propios registros, los Admin pueden ver todos los registros
+DROP POLICY IF EXISTS "Lectura de registros propios" ON time_logs;
 CREATE POLICY "Lectura de registros propios" ON time_logs FOR SELECT TO authenticated USING (auth.uid() = user_id OR (SELECT role FROM profiles WHERE id = auth.uid()) = 'Admin');
-CREATE POLICY "Insertar registros propios" ON time_logs FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Insertar registros propios" ON time_logs;
+DROP POLICY IF EXISTS "Insertar registros propios o Admin" ON time_logs;
+CREATE POLICY "Insertar registros propios o Admin" ON time_logs FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id OR (SELECT role FROM profiles WHERE id = auth.uid()) = 'Admin');
 
 -- 3. Tabla para asignar trabajadores a ferias
 CREATE TABLE IF NOT EXISTS feria_workers (

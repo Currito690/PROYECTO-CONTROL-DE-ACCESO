@@ -12,7 +12,7 @@ if (currentUser) {
 
 const app = {
   state: {
-    activeView: 'dashboard',
+    activeView: 'kiosk',
     users: [],
     ferias: [],
     timeLogs: [],
@@ -159,14 +159,7 @@ const app = {
 
 
   async init() {
-    if (!isAdmin) {
-      this.state.activeView = 'attendance';
-      // Ocultar nav items que solo son para admin
-      ['dashboard', 'users', 'logs', 'manage-ferias'].forEach(view => {
-        const el = document.querySelector(`[data-view="${view}"]`);
-        if (el) el.style.display = 'none';
-      });
-    }
+    // Configuración central en modo Kiosco
 
     this.setupGlobalListeners();
     this.injectModal();
@@ -174,10 +167,9 @@ const app = {
     this.injectWorkersModal();
     
     await this.loadUsers();
-    if (this.state.activeView === 'dashboard') {
-      await this.loadDashboardData();
-    } else if (this.state.activeView === 'attendance') {
-      await this.loadAttendanceData();
+    await this.loadFeriasData();
+    if (this.state.activeView === 'kiosk') {
+      await this.loadKioskData();
     }
     
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
@@ -330,10 +322,6 @@ const app = {
   },
 
   async switchView(view) {
-    if (!isAdmin && (view === 'dashboard' || view === 'users' || view === 'logs' || view === 'manage-ferias')) {
-      return;
-    }
-
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
     document.querySelector('.sidebar').classList.remove('mobile-open');
     const navItem = document.querySelector(`[data-view="${view}"]`);
@@ -341,9 +329,8 @@ const app = {
     this.state.activeView = view;
 
     if (view === 'users') await this.loadUsers();
-    if (view === 'attendance') await this.loadAttendanceData();
     if (view === 'manage-ferias') await this.loadFeriasData();
-    if (view === 'dashboard') await this.loadDashboardData();
+    if (view === 'kiosk') await this.loadKioskData();
     this.renderView(view);
   },
 
@@ -436,12 +423,10 @@ const app = {
     const content = document.getElementById('content');
     content.innerHTML = '';
 
-    if (view === 'dashboard') {
-      content.innerHTML = this.getDashboardHTML();
+    if (view === 'kiosk') {
+      content.innerHTML = this.getKioskHTML();
     } else if (view === 'users') {
       content.innerHTML = this.getUsersHTML();
-    } else if (view === 'attendance') {
-      content.innerHTML = this.getAttendanceHTML();
     } else if (view === 'manage-ferias') {
       content.innerHTML = this.getManageFeriasHTML();
     } else if (view === 'user-history') {
@@ -455,73 +440,88 @@ const app = {
     this.bindViewEvents();
   },
 
-  getDashboardHTML() {
-    const activeCount = this.state.users.filter(u => u.status === 'Active').length;
+  async loadKioskData() {
+    const { data: ferias } = await supabase.from('ferias').select('*').order('start_date', { ascending: true });
+    this.state.ferias = ferias || [];
+
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const { data: logs } = await supabase.from('time_logs')
+      .select('*')
+      .gte('timestamp', today.toISOString())
+      .order('timestamp', { ascending: true });
+    
+    this.state.allTodayLogs = logs || [];
+  },
+
+  getKioskHTML() {
+    const activeFeriaId = window.selectedKioskFeriaId || (this.state.ferias.length > 0 ? this.state.ferias[0].id : '');
+    const activeWorkerId = window.selectedKioskWorkerId || '';
+    
+    let isWorking = false;
+    let workerLogs = [];
+    if (activeWorkerId) {
+      workerLogs = this.state.allTodayLogs.filter(l => l.user_id === activeWorkerId);
+      isWorking = workerLogs.length > 0 && workerLogs[workerLogs.length - 1].action_type === 'Entrada';
+    }
+
     return `
-      <div style="margin-bottom: 2rem;">
-        <h1 style="font-size: 1.5rem; font-weight: 700;">Panel de Control</h1>
-        <p style="color: var(--text-secondary);">Bienvenido. Hay ${activeCount} usuarios activos.</p>
-      </div>
-      <div class="metrics-grid">
-        <div class="card" ${isAdmin ? 'id="totalUsersCard" style="cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'translateY(0)\'" title="Ir al listado de usuarios"' : ''}>
-          <span class="card-title">Usuarios Totales</span>
-          <div class="card-value">${this.state.users.length}</div>
-          <div class="card-trend trend-up">${isAdmin ? 'Ver listado →' : 'En Supabase'}</div>
+      <div style="max-width:650px; margin:2rem auto; padding:0 1rem;">
+        <div style="text-align:center; margin-bottom:2.5rem;">
+          <h1 style="font-size:2rem; font-weight:800; color:var(--text-main); margin-bottom:0.5rem;">Punto de Control Central</h1>
+          <p style="color:var(--text-secondary); font-size:1.1rem;">Selecciona la Feria y el Empleado para registrar su jornada</p>
         </div>
-        <div class="card">
-          <span class="card-title">Accesos Hoy</span>
-          <div class="card-value">148</div>
-          <div class="card-trend trend-up">+12% vs ayer</div>
-        </div>
-        <div class="card">
-          <span class="card-title">Denegaciones</span>
-          <div class="card-value" style="color:var(--error-text)">3</div>
-          <div class="card-trend trend-down">Estable</div>
-        </div>
-        <div class="card">
-          <span class="card-title">Estado Sistema</span>
-          <div class="card-value" style="color:var(--success-text)">Online</div>
-          <div class="card-trend" style="color:var(--success-text)">Correcto</div>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:2fr 1fr;gap:1.5rem;">
-        <div class="card" style="height:350px;display:flex;flex-direction:column; overflow-y:auto;">
-          <h3 style="font-size:1rem;margin-bottom:1rem;">Actividad de Hoy</h3>
-          ${isAdmin ? `
-            <div style="display:flex;flex-direction:column;gap:1rem;">
-              ${!this.state.allTodayLogs || this.state.allTodayLogs.length === 0 ? '<p style="color:var(--text-muted);text-align:center;padding:2rem;">Sin actividad registrada hoy.</p>' : ''}
-              ${(this.state.allTodayLogs || []).map(w => `
-                <div style="display:flex;justify-content:space-between;padding:1rem;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;margin-bottom:0.75rem; border-left: 4px solid ${w.isFinished ? '#94a3b8' : 'var(--success-text)'};">
-                  <div style="display:flex;align-items:flex-start;gap:0.75rem;">
-                    <div style="width:10px;height:10px;border-radius:50%;background:${w.isFinished ? '#94a3b8' : 'var(--success-text)'};box-shadow:0 0 5px ${w.isFinished ? 'transparent' : 'var(--success-text)'};margin-top:6px;"></div>
-                    <div style="display:flex;flex-direction:column;">
-                      <a href="javascript:void(0)" onclick="app.viewUserHistory('${w.id}', '${w.name.replace(/'/g, "\\'")}')" style="font-weight:600;color:var(--primary);text-decoration:none;font-size:0.95rem;">${w.name}</a>
-                      <span style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.25rem;font-weight:500;">🚪 Feria: ${w.feria_name}</span>
-                    </div>
-                  </div>
-                  <div style="color:var(--text-secondary);font-size:0.8125rem;text-align:right;">
-                    <div style="font-weight:600; color:var(--success-text);">Entrada: ${w.entryTime}</div>
-                    ${w.exitTime ? `<div style="font-weight:600; color:var(--error-text);">Salida: ${w.exitTime}</div>` : '<div style="font-style:italic; color:var(--warning-text);">Trabajando...</div>'}
-                    ${w.latitude && w.longitude ? `<a href="https://www.google.com/maps?q=${w.latitude},${w.longitude}" target="_blank" style="color:var(--primary);text-decoration:none;display:inline-flex;align-items:center;margin-top:0.25rem; font-size:11px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:2px"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>Ver GPS</a>` : ''}
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          ` : '<div style="flex-grow:1;display:flex;align-items:center;justify-content:center;color:var(--text-muted);border:2px dashed #f1f5f9;border-radius:8px;">[ Gráfico Reservado ]</div>'}
-        </div>
-        <div class="card">
-          <h3 style="font-size:1rem;margin-bottom:1rem;">Alertas Recientes</h3>
-          <div style="display:flex;flex-direction:column;gap:1rem;">
-            ${this.state.logs.map(log => `
-              <div style="padding-bottom:0.75rem;border-bottom:1px solid #f8fafc;">
-                <div style="font-size:0.8125rem;font-weight:600;">${log.action}</div>
-                <div style="font-size:0.75rem;color:var(--text-secondary);">${log.user}</div>
-                <div style="font-size:0.75rem;color:var(--text-muted);">${log.time}</div>
+        
+        <div class="card" style="padding:3rem 2rem; background:white; border-radius:16px; box-shadow:0 10px 25px rgba(0,0,0,0.05);">
+          <!-- 1. Feria -->
+          <div class="form-group" style="text-align:left; margin-bottom: 2rem;">
+            <label style="font-weight:700; font-size:1.05rem; color:var(--text-main); display:block; margin-bottom:0.75rem;">1. Seleccionar Feria Activa</label>
+            <div style="position:relative;">
+              <select id="kioskFeriaSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskFeriaId = this.value; app.renderView('kiosk')">
+                <option value="" disabled ${!activeFeriaId ? 'selected' : ''}>-- Elige una feria --</option>
+                ${this.state.ferias.map(f => `<option value="${f.id}" ${f.id === activeFeriaId ? 'selected' : ''}>${f.name}</option>`).join('')}
+              </select>
+              <div style="position:absolute; right:1.2rem; top:50%; transform:translateY(-50%); pointer-events:none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
               </div>
-            `).join('')}
+            </div>
+          </div>
+
+          <!-- 2. Trabajador -->
+          <div class="form-group" style="text-align:left;">
+            <label style="font-weight:700; font-size:1.05rem; color:var(--text-main); display:block; margin-bottom:0.75rem;">2. Seleccionar Trabajador</label>
+            <div style="position:relative;">
+              <select id="kioskWorkerSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskWorkerId = this.value; app.renderView('kiosk')">
+                <option value="" disabled ${!activeWorkerId ? 'selected' : ''}>-- Elige un empleado --</option>
+                ${this.state.users.filter(u => u.role !== 'Admin').map(u => `<option value="${u.id}" ${u.id === activeWorkerId ? 'selected' : ''}>${u.name}</option>`).join('')}
+              </select>
+              <div style="position:absolute; right:1.2rem; top:50%; transform:translateY(-50%); pointer-events:none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. Botón Fichar -->
+          <div style="margin-top:3.5rem;">
+            ${activeWorkerId && activeFeriaId
+              ? `<button id="btnPunchAction" class="btn-punch ${isWorking ? 'out' : 'in'}" onclick="window.handlePunch('${isWorking ? 'Salida' : 'Entrada'}', '${activeWorkerId}', '${activeFeriaId}')" style="width:100%; padding:1.25rem; font-size:1.25rem; border-radius:12px; transition:transform 0.1s;">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                  ${isWorking ? 'Fichar SALIDA de ' : 'Fichar ENTRADA de '}<span style="font-weight:800">${this.state.users.find(u=>u.id===activeWorkerId)?.name || ''}</span>
+                </button>
+                <div style="margin-top:1.5rem; text-align:center; padding:1rem; background:${isWorking ? '#f0fdf4' : '#f8fafc'}; border-radius:8px; display:inline-block; border: 1px solid ${isWorking ? '#bbf7d0' : '#e2e8f0'};">
+                  <span style="color:var(--text-secondary); font-size:0.9rem;">Estado hoy: </span>
+                  <span style="font-weight:700; color:${isWorking ? 'var(--success-text)' : 'var(--text-main)'}; font-size:1rem;">
+                    ${isWorking ? '🟢 Trabajando actualmente' : '⚪ Inactivo'}
+                  </span>
+                </div>`
+              : `<button class="btn-punch" disabled style="width:100%; padding:1.25rem; font-size:1.25rem; background:#cbd5e1; color:#f8fafc; border:none; border-radius:12px; cursor:not-allowed;">
+                  Rellena los datos para fichar
+                </button>`
+            }
           </div>
         </div>
-      </div>`;
+      </div>
+    `;
   },
 
   getUsersHTML() {
@@ -1090,7 +1090,7 @@ function showGeoBlockedModal() {
   `);
 }
 
-window.handlePunch = async function(type) {
+window.handlePunch = async function(type, workerId, feriaId) {
   const btn = document.getElementById('btnPunchAction');
   if(btn) { btn.disabled = true; btn.textContent = 'Obteniendo ubicación...'; }
 
@@ -1105,7 +1105,8 @@ window.handlePunch = async function(type) {
     const lon = position.coords.longitude;
 
     const { error } = await supabase.from('time_logs').insert({
-      user_id: currentUser.id,
+      user_id: workerId,
+      feria_id: feriaId,
       action_type: type,
       latitude: lat,
       longitude: lon
@@ -1115,8 +1116,8 @@ window.handlePunch = async function(type) {
       alert('Error al fichar en base de datos: ' + error.message);
       if(btn) { btn.disabled = false; btn.textContent = type === 'Entrada' ? 'Fichar ENTRADA' : 'Fichar SALIDA'; }
     } else {
-      await app.loadAttendanceData();
-      app.renderView('attendance');
+      await app.loadKioskData();
+      app.renderView('kiosk');
     }
   }, (_err) => {
     if(btn) { btn.disabled = false; btn.textContent = type === 'Entrada' ? 'Fichar ENTRADA' : 'Fichar SALIDA'; }
