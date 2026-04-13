@@ -165,6 +165,7 @@ const app = {
     this.injectModal();
     this.injectFeriaModal();
     this.injectWorkersModal();
+    this.injectEditFeriaModal();
     
     await this.loadUsers();
     await this.loadFeriasData();
@@ -901,6 +902,7 @@ const app = {
               </div>
               <div style="display:flex; flex-direction:column; gap:0.5rem; align-items:flex-end;">
                 <button class="btn btn-primary" style="padding:0.4rem 0.8rem; font-size:0.75rem; font-weight:600;" onclick="app.manageFeriaWorkers('${f.id}')">Gestionar Empleados</button>
+                <button class="btn btn-primary" style="background:#475569; padding:0.4rem 0.8rem; font-size:0.75rem; font-weight:600;" onclick="app.openEditFeriaModal('${f.id}')">Editar Fechas</button>
                 <button class="btn btn-ghost" style="color:var(--error-text); padding:0.4rem 0.8rem; font-size:0.75rem;" onclick="app.deleteFeria('${f.id}')">Borrar Feria</button>
               </div>
             </div>
@@ -968,6 +970,73 @@ const app = {
       </div>`;
     document.body.insertAdjacentHTML('beforeend', HTML);
     document.getElementById('workersForm').onsubmit = async (e) => { e.preventDefault(); await this.saveWorkers(); };
+  },
+
+  injectEditFeriaModal() {
+    const HTML = `
+      <div id="editFeriaModalOverlay" class="modal-overlay">
+        <div class="modal">
+          <div class="modal-header">
+            <h2 style="font-size: 1.125rem; font-weight: 700;">Editar Fechas de Feria</h2>
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('editFeriaModalOverlay').classList.remove('active')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+          </div>
+          <form id="editFeriaForm">
+            <input type="hidden" id="editFeriaUpdateId" />
+            <div class="modal-body">
+              <div class="form-group"><label>Nombre del Evento</label><input type="text" id="editFeriaName" class="input-field" required></div>
+              <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+                <div><label>Fecha Inicio</label><input type="date" id="editFeriaStart" class="input-field" required></div>
+                <div><label>Fecha Fin</label><input type="date" id="editFeriaEnd" class="input-field" required></div>
+              </div>
+              <div class="form-group"><label>Ubicación</label><input type="text" id="editFeriaLoc" class="input-field" required></div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-ghost" onclick="document.getElementById('editFeriaModalOverlay').classList.remove('active')">Cancelar</button>
+              <button type="submit" class="btn btn-primary">Guardar Cambios</button>
+            </div>
+          </form>
+        </div>
+      </div>`;
+    document.body.insertAdjacentHTML('beforeend', HTML);
+    document.getElementById('editFeriaForm').onsubmit = async (e) => { e.preventDefault(); await this.updateFeria(); };
+  },
+
+  openEditFeriaModal(feriaId) {
+    const f = this.state.ferias.find(x => x.id === feriaId);
+    if (!f) return;
+    document.getElementById('editFeriaUpdateId').value = f.id;
+    document.getElementById('editFeriaName').value = f.name;
+    document.getElementById('editFeriaStart').value = f.start_date;
+    document.getElementById('editFeriaEnd').value = f.end_date;
+    document.getElementById('editFeriaLoc').value = f.location;
+    document.getElementById('editFeriaModalOverlay').classList.add('active');
+  },
+
+  async updateFeria() {
+    const id = document.getElementById('editFeriaUpdateId').value;
+    const name = document.getElementById('editFeriaName').value;
+    const start_date = document.getElementById('editFeriaStart').value;
+    const end_date = document.getElementById('editFeriaEnd').value;
+    const location = document.getElementById('editFeriaLoc').value;
+
+    const btn = document.querySelector('#editFeriaForm button[type="submit"]');
+    btn.disabled = true;
+    btn.textContent = 'Guardando...';
+
+    const { error } = await supabase.from('ferias').update({
+      name, start_date, end_date, location
+    }).eq('id', id);
+
+    btn.disabled = false;
+    btn.textContent = 'Guardar Cambios';
+
+    if (!error) {
+      document.getElementById('editFeriaModalOverlay').classList.remove('active');
+      await this.loadFeriasData();
+      this.renderView('manage-ferias');
+    } else {
+      alert('Error actualizando feria: ' + error.message);
+    }
   },
 
   async manageFeriaWorkers(feriaId) {

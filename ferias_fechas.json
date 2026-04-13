@@ -1,0 +1,101 @@
+{
+  "warning": "Rellena las fechas en formato YYYY-MM-DD (ejemplo: 2024-05-15).",
+  "ferias": [
+    {
+      "name": "Feria de Vejer de la frontera",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Vejer de la frontera"
+    },
+    {
+      "name": "Feria de Rota",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Rota"
+    },
+    {
+      "name": "Feria de Jerez",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Jerez"
+    },
+    {
+      "name": "Feria de San Jose Del Valle",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "San Jose Del Valle"
+    },
+    {
+      "name": "Feria de Paterna",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Paterna"
+    },
+    {
+      "name": "Feria de Torrecera",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Torrecera"
+    },
+    {
+      "name": "Feria de Revilla",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Revilla"
+    },
+    {
+      "name": "Feria de Benalup",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Benalup"
+    },
+    {
+      "name": "Doma Vaquera Alcala",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Alcala"
+    },
+    {
+      "name": "Feria de la Barca",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "La Barca"
+    },
+    {
+      "name": "Feria de Estella",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Estella"
+    },
+    {
+      "name": "Feria de Alcala",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Alcala"
+    },
+    {
+      "name": "Feria de Guadalcacin",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Guadalcacin"
+    },
+    {
+      "name": "Feria de Tarifa",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Tarifa"
+    },
+    {
+      "name": "Feria de Villamartin",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Villamartin"
+    },
+    {
+      "name": "Feria de Arcos",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "location": "Arcos"
+    }
+  ]
+}
