@@ -182,16 +182,42 @@ const app = {
   },
 
   async loadUsers() {
-    const { data, error } = await supabase.from('profiles').select('*');
-    if (!error && data) {
-      this.state.users = data.map(u => ({
-        id: u.id,
-        name: u.name,
-        email: u.email || '',
-        role: u.role,
-        status: u.status,
-        lastAccess: u.last_access || 'Nunca'
-      })).sort((a, b) => a.name.localeCompare(b.name));
+    const { data: profiles, error: pError } = await supabase.from('profiles').select('*');
+    const { data: logs, error: lError } = await supabase.from('time_logs').select('user_id, action_type, timestamp').order('timestamp', { ascending: true });
+
+    const totalMsByUser = {};
+    if (logs) {
+      const logsByUser = {};
+      logs.forEach(l => {
+        if (!logsByUser[l.user_id]) logsByUser[l.user_id] = { totalMs: 0, lastIn: null };
+        const uData = logsByUser[l.user_id];
+        if (l.action_type === 'Entrada') {
+          uData.lastIn = new Date(l.timestamp);
+        } else if (l.action_type === 'Salida' && uData.lastIn) {
+          uData.totalMs += new Date(l.timestamp) - uData.lastIn;
+          uData.lastIn = null;
+        }
+      });
+      Object.keys(logsByUser).forEach(uid => {
+        totalMsByUser[uid] = logsByUser[uid].totalMs;
+      });
+    }
+
+    if (!pError && profiles) {
+      this.state.users = profiles.map(u => {
+        const ms = totalMsByUser[u.id] || 0;
+        const hrs = Math.floor(ms / 1000 / 60 / 60);
+        const mins = Math.floor((ms / 1000 / 60) % 60);
+        return {
+          id: u.id,
+          name: u.name,
+          email: u.email || '',
+          role: u.role,
+          status: u.status,
+          lastAccess: u.last_access || 'Nunca',
+          totalHours: hrs > 0 || mins > 0 ? `${hrs}h ${mins}m` : '0h 0m'
+        };
+      }).sort((a, b) => a.name.localeCompare(b.name));
     }
   },
 
@@ -541,12 +567,12 @@ const app = {
         <table>
           <thead>
             <tr>
-              <th>Usuario</th><th>Rol</th><th>Estado</th><th>Último Acceso</th><th>Acciones</th>
+              <th>Usuario</th><th>Rol</th><th>Estado</th><th>Horas Acumuladas</th><th>Último Acceso</th><th>Acciones</th>
             </tr>
           </thead>
           <tbody>
             ${this.state.users.length === 0
-              ? `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:2rem;">No hay usuarios todavía.</td></tr>`
+              ? `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:2rem;">No hay usuarios todavía.</td></tr>`
               : this.state.users.map(u => this.renderUserRow(u)).join('')
             }
           </tbody>
@@ -572,6 +598,7 @@ const app = {
         </td>
         <td><span class="badge ${roleClass}">${user.role}</span></td>
         <td><span class="badge ${statusClass}">${user.status}</span></td>
+        <td style="font-weight:700; color:var(--primary);">${user.totalHours}</td>
         <td style="color:var(--text-secondary);">${user.lastAccess}</td>
         <td>
           <button class="btn btn-primary" title="Ver Historial, Horas y GPS" style="padding:0.4rem 0.8rem; font-size:0.75rem; margin-right:0.5rem;" onclick="app.viewUserHistory('${user.id}', '${user.name.replace(/'/g, "\\'")}')">
