@@ -638,8 +638,9 @@ const app = {
   renderUserRow(user) {
     const roleClass   = 'badge-' + user.role.toLowerCase();
     const statusClass = 'badge-' + user.status.toLowerCase();
+    const safeName = user.name.replace(/'/g, "\\'");
     return `
-      <tr>
+      <tr onclick="window.showHorasPorFeria('${user.id}', '${safeName}')" style="cursor:pointer;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
         <td>
           <div style="display:flex;align-items:center;gap:0.75rem;">
             <div style="width:32px;height:32px;background:#e2e8f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#64748b;font-size:0.75rem;">
@@ -655,8 +656,8 @@ const app = {
         <td><span class="badge ${statusClass}">${user.status}</span></td>
         <td style="font-weight:700; color:var(--primary);">${user.totalHours}</td>
         <td style="color:var(--text-secondary);">${user.lastAccess}</td>
-        <td>
-          <button class="btn btn-primary" title="Ver Historial, Horas y GPS" style="padding:0.4rem 0.8rem; font-size:0.75rem; margin-right:0.5rem;" onclick="app.viewUserHistory('${user.id}', '${user.name.replace(/'/g, "\\'")}')">
+        <td onclick="event.stopPropagation()">
+          <button class="btn btn-primary" title="Ver Historial, Horas y GPS" style="padding:0.4rem 0.8rem; font-size:0.75rem; margin-right:0.5rem;" onclick="app.viewUserHistory('${user.id}', '${safeName}')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position:relative;top:2px;margin-right:2px"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
             Historial y GPS
           </button>
@@ -1274,6 +1275,119 @@ window.handlePunch = async function(type, workerId, feriaId) {
     if(btn) { btn.disabled = false; btn.textContent = type === 'Entrada' ? 'Fichar ENTRADA' : 'Fichar SALIDA'; }
     showGeoBlockedModal();
   }, { timeout: 10000 });
+};
+
+window.showHorasPorFeria = async function(userId, userName) {
+  // Crear overlay
+  const existing = document.getElementById('horasFeriaModal');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'horasFeriaModal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(2px);';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:16px;padding:2rem;max-width:580px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.15);">
+      <div style="text-align:center;padding:2rem;color:var(--text-secondary);">Cargando datos...</div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  // Cargar logs con info de feria
+  const { data: logs } = await supabase
+    .from('time_logs')
+    .select('*, ferias(id, name, start_date, end_date)')
+    .eq('user_id', userId)
+    .order('timestamp', { ascending: true });
+
+  // Agrupar por feria y calcular horas
+  const feriaMap = {};
+  (logs || []).forEach(log => {
+    const feriaId = log.feria_id || '__sin_feria__';
+    const feriaName = log.ferias?.name || 'Sin feria asignada';
+    const feriaStart = log.ferias?.start_date || null;
+    const feriaEnd = log.ferias?.end_date || null;
+    if (!feriaMap[feriaId]) {
+      feriaMap[feriaId] = { name: feriaName, start: feriaStart, end: feriaEnd, totalMs: 0, lastIn: null, days: new Set() };
+    }
+    const d = feriaMap[feriaId];
+    d.days.add(new Date(log.timestamp).toLocaleDateString('es-ES'));
+    if (log.action_type === 'Entrada') {
+      d.lastIn = new Date(log.timestamp);
+    } else if (log.action_type === 'Salida' && d.lastIn) {
+      d.totalMs += new Date(log.timestamp) - d.lastIn;
+      d.lastIn = null;
+    }
+  });
+
+  const fmtMs = ms => {
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    return `${h}h ${m}m`;
+  };
+
+  const entries = Object.entries(feriaMap);
+  const totalMs = entries.reduce((acc, [, f]) => acc + f.totalMs, 0);
+
+  const initials = userName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+
+  const rows = entries.length > 0
+    ? entries.map(([, f]) => `
+        <tr onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+          <td style="padding:1rem 1.25rem;">
+            <div style="font-weight:600;color:var(--text-main);">${f.name}</div>
+            ${f.start ? `<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.2rem;">📅 ${f.start} — ${f.end}</div>` : ''}
+          </td>
+          <td style="padding:1rem;text-align:center;color:var(--text-secondary);font-size:0.9rem;">${f.days.size} día${f.days.size !== 1 ? 's' : ''}</td>
+          <td style="padding:1rem 1.25rem;text-align:right;">
+            <span style="font-weight:800;font-size:1.1rem;color:var(--primary);">${fmtMs(f.totalMs)}</span>
+          </td>
+        </tr>
+      `).join('')
+    : `<tr><td colspan="3" style="padding:3rem;text-align:center;color:var(--text-muted);">Este empleado no tiene fichajes registrados.</td></tr>`;
+
+  const box = overlay.querySelector('div');
+  box.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.75rem;">
+      <div style="display:flex;align-items:center;gap:1rem;">
+        <div style="width:48px;height:48px;background:linear-gradient(135deg,#3b82f6,#2563eb);border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:800;color:white;font-size:1.1rem;flex-shrink:0;">${initials}</div>
+        <div>
+          <h2 style="font-size:1.3rem;font-weight:800;color:var(--text-main);margin:0;">${userName}</h2>
+          <p style="color:var(--text-secondary);font-size:0.85rem;margin:0.2rem 0 0;">Horas trabajadas por feria</p>
+        </div>
+      </div>
+      <button onclick="document.getElementById('horasFeriaModal').remove()" style="background:none;border:none;cursor:pointer;padding:0.4rem;border-radius:8px;color:var(--text-secondary);line-height:0;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='none'">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+
+    ${entries.length > 0 ? `
+    <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #bfdbfe;border-radius:12px;padding:1rem 1.5rem;margin-bottom:1.5rem;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-size:0.8rem;font-weight:600;color:#1d4ed8;text-transform:uppercase;letter-spacing:0.05em;">Total acumulado</div>
+        <div style="font-size:0.75rem;color:#3b82f6;margin-top:0.1rem;">${entries.length} feria${entries.length !== 1 ? 's' : ''}</div>
+      </div>
+      <div style="font-size:2rem;font-weight:800;color:#1d4ed8;">${fmtMs(totalMs)}</div>
+    </div>` : ''}
+
+    <div style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+            <th style="padding:0.75rem 1.25rem;text-align:left;font-size:0.78rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Feria</th>
+            <th style="padding:0.75rem 1rem;text-align:center;font-size:0.78rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Días</th>
+            <th style="padding:0.75rem 1.25rem;text-align:right;font-size:0.78rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Horas</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:1rem;text-align:center;">
+      <button onclick="document.getElementById('horasFeriaModal').remove()" style="background:none;border:1px solid #e2e8f0;border-radius:8px;padding:0.5rem 1.5rem;cursor:pointer;color:var(--text-secondary);font-size:0.9rem;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='none'">Cerrar</button>
+    </div>
+  `;
 };
 
 app.handleInit();
