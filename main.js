@@ -471,20 +471,49 @@ const app = {
     const { data: ferias } = await supabase.from('ferias').select('*').order('start_date', { ascending: true });
     this.state.ferias = ferias || [];
 
+    const { data: feriaWorkers } = await supabase.from('feria_workers').select('*');
+    this.state.feriaWorkers = feriaWorkers || [];
+
     const today = new Date();
     today.setHours(0,0,0,0);
     const { data: logs } = await supabase.from('time_logs')
       .select('*')
       .gte('timestamp', today.toISOString())
       .order('timestamp', { ascending: true });
-    
+
     this.state.allTodayLogs = logs || [];
   },
 
   getKioskHTML() {
+    // Auto-detectar la feria activa por fecha de hoy
+    const todayStr = new Date().toISOString().split('T')[0];
+    const currentFeria = this.state.ferias.find(f => f.start_date <= todayStr && f.end_date >= todayStr);
+
+    // Si no hay selección manual, pre-seleccionar la feria activa de hoy (o la primera)
+    if (!window.selectedKioskFeriaId && currentFeria) {
+      window.selectedKioskFeriaId = currentFeria.id;
+    }
     const activeFeriaId = window.selectedKioskFeriaId || (this.state.ferias.length > 0 ? this.state.ferias[0].id : '');
+
+    // Comprobar si la feria seleccionada es la activa hoy
+    const selectedFeria = this.state.ferias.find(f => f.id === activeFeriaId);
+    const isFeriaActive = selectedFeria && selectedFeria.start_date <= todayStr && selectedFeria.end_date >= todayStr;
+
+    // Filtrar trabajadores asignados a la feria seleccionada
+    const assignedWorkerIds = (this.state.feriaWorkers || [])
+      .filter(fw => fw.feria_id === activeFeriaId)
+      .map(fw => fw.user_id);
+    const feriaEmployees = activeFeriaId && assignedWorkerIds.length > 0
+      ? this.state.users.filter(u => u.role !== 'Admin' && assignedWorkerIds.includes(u.id))
+      : this.state.users.filter(u => u.role !== 'Admin');
+    const noAssignedWorkers = activeFeriaId && assignedWorkerIds.length === 0;
+
+    // Si el trabajador seleccionado no está en la feria actual, resetear
+    if (window.selectedKioskWorkerId && activeFeriaId && assignedWorkerIds.length > 0 && !assignedWorkerIds.includes(window.selectedKioskWorkerId)) {
+      window.selectedKioskWorkerId = '';
+    }
     const activeWorkerId = window.selectedKioskWorkerId || '';
-    
+
     let isWorking = false;
     let workerLogs = [];
     if (activeWorkerId) {
@@ -497,35 +526,61 @@ const app = {
         <div style="text-align:center; margin-bottom:2.5rem;">
           <h1 style="font-size:2rem; font-weight:800; color:var(--text-main); margin-bottom:0.5rem;">Punto de Control Central</h1>
           <p style="color:var(--text-secondary); font-size:1.1rem;">Selecciona la Feria y el Empleado para registrar su jornada</p>
+          ${currentFeria
+            ? `<div style="display:inline-flex; align-items:center; gap:0.5rem; margin-top:0.75rem; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:99px; padding:0.35rem 1rem;">
+                <span style="width:9px; height:9px; background:#22c55e; border-radius:50%; display:inline-block; box-shadow:0 0 0 3px #bbf7d0;"></span>
+                <span style="font-weight:600; color:#15803d; font-size:0.9rem;">Feria en curso: ${currentFeria.name}</span>
+              </div>`
+            : `<div style="display:inline-flex; align-items:center; gap:0.5rem; margin-top:0.75rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:99px; padding:0.35rem 1rem;">
+                <span style="width:9px; height:9px; background:#94a3b8; border-radius:50%; display:inline-block;"></span>
+                <span style="font-weight:600; color:#64748b; font-size:0.9rem;">Sin feria activa hoy</span>
+              </div>`
+          }
         </div>
-        
+
         <div class="card" style="padding:3rem 2rem; background:white; border-radius:16px; box-shadow:0 10px 25px rgba(0,0,0,0.05);">
           <!-- 1. Feria -->
           <div class="form-group" style="text-align:left; margin-bottom: 2rem;">
-            <label style="font-weight:700; font-size:1.05rem; color:var(--text-main); display:block; margin-bottom:0.75rem;">1. Seleccionar Feria Activa</label>
+            <label style="font-weight:700; font-size:1.05rem; color:var(--text-main); display:block; margin-bottom:0.75rem;">1. Seleccionar Feria</label>
             <div style="position:relative;">
-              <select id="kioskFeriaSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskFeriaId = this.value; app.renderView('kiosk')">
+              <select id="kioskFeriaSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskFeriaId = this.value; window.selectedKioskWorkerId = ''; app.renderView('kiosk')">
                 <option value="" disabled ${!activeFeriaId ? 'selected' : ''}>-- Elige una feria --</option>
-                ${this.state.ferias.map(f => `<option value="${f.id}" ${f.id === activeFeriaId ? 'selected' : ''}>${f.name}</option>`).join('')}
+                ${this.state.ferias.map(f => {
+                  const isActive = f.start_date <= todayStr && f.end_date >= todayStr;
+                  return `<option value="${f.id}" ${f.id === activeFeriaId ? 'selected' : ''}>${isActive ? '● ' : ''}${f.name}${isActive ? ' (Activa hoy)' : ''}</option>`;
+                }).join('')}
               </select>
               <div style="position:absolute; right:1.2rem; top:50%; transform:translateY(-50%); pointer-events:none;">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
               </div>
             </div>
+            ${selectedFeria ? `<div style="margin-top:0.5rem; font-size:0.82rem; color:var(--text-secondary);">
+              ${selectedFeria.location ? `📍 ${selectedFeria.location} &nbsp;·&nbsp; ` : ''}
+              📅 ${selectedFeria.start_date} — ${selectedFeria.end_date}
+              ${isFeriaActive ? `&nbsp;<span style="color:#16a34a; font-weight:600;">· En curso</span>` : ''}
+            </div>` : ''}
           </div>
 
           <!-- 2. Trabajador -->
           <div class="form-group" style="text-align:left;">
-            <label style="font-weight:700; font-size:1.05rem; color:var(--text-main); display:block; margin-bottom:0.75rem;">2. Seleccionar Trabajador</label>
-            <div style="position:relative;">
-              <select id="kioskWorkerSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskWorkerId = this.value; app.renderView('kiosk')">
-                <option value="" disabled ${!activeWorkerId ? 'selected' : ''}>-- Elige un empleado --</option>
-                ${this.state.users.filter(u => u.role !== 'Admin').map(u => `<option value="${u.id}" ${u.id === activeWorkerId ? 'selected' : ''}>${u.name}</option>`).join('')}
-              </select>
-              <div style="position:absolute; right:1.2rem; top:50%; transform:translateY(-50%); pointer-events:none;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-              </div>
-            </div>
+            <label style="font-weight:700; font-size:1.05rem; color:var(--text-main); display:block; margin-bottom:0.75rem;">
+              2. Seleccionar Trabajador
+              ${activeFeriaId && !noAssignedWorkers ? `<span style="font-weight:400; font-size:0.82rem; color:var(--text-secondary); margin-left:0.5rem;">(${feriaEmployees.length} asignado${feriaEmployees.length !== 1 ? 's' : ''} a esta feria)</span>` : ''}
+            </label>
+            ${noAssignedWorkers
+              ? `<div style="padding:1rem; background:#fefce8; border:1px solid #fde68a; border-radius:8px; color:#92400e; font-size:0.9rem;">
+                  ⚠️ No hay trabajadores asignados a esta feria. Ve a <strong>Gestión de Ferias</strong> para asignarlos.
+                </div>`
+              : `<div style="position:relative;">
+                  <select id="kioskWorkerSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskWorkerId = this.value; app.renderView('kiosk')">
+                    <option value="" disabled ${!activeWorkerId ? 'selected' : ''}>-- Elige un empleado --</option>
+                    ${feriaEmployees.map(u => `<option value="${u.id}" ${u.id === activeWorkerId ? 'selected' : ''}>${u.name}</option>`).join('')}
+                  </select>
+                  <div style="position:absolute; right:1.2rem; top:50%; transform:translateY(-50%); pointer-events:none;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  </div>
+                </div>`
+            }
           </div>
 
           <!-- 3. Botón Fichar -->
