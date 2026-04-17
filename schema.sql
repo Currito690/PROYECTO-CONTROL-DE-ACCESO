@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS ferias (
   start_date DATE NOT NULL,
   end_date DATE NOT NULL,
   location TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  base_hourly_rate NUMERIC DEFAULT 0
 );
 
 -- Habilitar RLS en Ferias
@@ -22,6 +23,7 @@ INSERT INTO ferias (name, start_date, end_date, location) VALUES
 ('Feria de Abril (Sevilla)', '2026-04-14', '2026-04-20', 'Recinto Ferial Los Remedios'),
 ('Feria de Málaga', '2026-08-15', '2026-08-22', 'Cortijo de Torres');
 
+ALTER TABLE IF EXISTS ferias ADD COLUMN IF NOT EXISTS base_hourly_rate NUMERIC DEFAULT 0;
 
 -- 2. Tabla para Registros de Fichaje
 CREATE TABLE IF NOT EXISTS time_logs (
@@ -59,11 +61,46 @@ CREATE POLICY "Users view assigned ferias" ON feria_workers FOR SELECT TO authen
 -- Ejecuta este bloque una sola vez en el SQL Editor de Supabase.
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC DEFAULT 0;
 
+-- Función robusta de detección de admin.
+-- Mira el JWT (user_metadata / app_metadata), el email conocido de macario,
+-- y por último la tabla profiles. Así coincide con la lógica del frontend
+-- y funciona aunque la fila en profiles no esté sincronizada.
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT
+    auth.email() = 'macario@duke.com'
+    OR LOWER(COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', '')) = 'admin'
+    OR LOWER(COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '')) = 'admin'
+    OR EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid()
+        AND LOWER(COALESCE(role, '')) = 'admin'
+    );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+
 DROP POLICY IF EXISTS "Admin update any time log" ON time_logs;
-CREATE POLICY "Admin update any time log" ON time_logs FOR UPDATE TO authenticated USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'Admin' OR auth.email() = 'macario@duke.com');
+CREATE POLICY "Admin update any time log" ON time_logs
+  FOR UPDATE TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Admin delete any time log" ON time_logs;
-CREATE POLICY "Admin delete any time log" ON time_logs FOR DELETE TO authenticated USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'Admin' OR auth.email() = 'macario@duke.com');
+CREATE POLICY "Admin delete any time log" ON time_logs
+  FOR DELETE TO authenticated
+  USING (public.is_admin());
 
 DROP POLICY IF EXISTS "Admin update any profile" ON profiles;
-CREATE POLICY "Admin update any profile" ON profiles FOR UPDATE TO authenticated USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'Admin' OR auth.email() = 'macario@duke.com');
+CREATE POLICY "Admin update any profile" ON profiles
+  FOR UPDATE TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+-- Diagnóstico: ejecuta esto para ver tu estado actual:
+-- SELECT auth.uid(), auth.email(), (SELECT role FROM profiles WHERE id = auth.uid()) AS my_role, public.is_admin() AS am_i_admin;

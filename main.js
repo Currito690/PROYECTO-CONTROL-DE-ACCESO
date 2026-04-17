@@ -186,29 +186,36 @@ const app = {
 
   async loadUsers() {
     const { data: profiles, error: pError } = await supabase.from('profiles').select('*');
-    const { data: logs, error: lError } = await supabase.from('time_logs').select('user_id, action_type, timestamp').order('timestamp', { ascending: true });
+    const { data: logs, error: lError } = await supabase.from('time_logs').select('user_id, action_type, timestamp, feria_id, ferias(base_hourly_rate)').order('timestamp', { ascending: true });
 
-    const totalMsByUser = {};
-    if (logs) {
-      const logsByUser = {};
+    const statsByUser = {};
+    if (profiles) {
+      profiles.forEach(p => {
+        statsByUser[p.id] = { totalMs: 0, totalEarnings: 0, lastIn: null, defaultRate: Number(p.hourly_rate) || 10 };
+      });
+    }
+
+    if (logs && profiles) {
       logs.forEach(l => {
-        if (!logsByUser[l.user_id]) logsByUser[l.user_id] = { totalMs: 0, lastIn: null };
-        const uData = logsByUser[l.user_id];
+        const uData = statsByUser[l.user_id];
+        if (!uData) return;
+        
         if (l.action_type === 'Entrada') {
-          uData.lastIn = new Date(l.timestamp);
+          uData.lastIn = { ts: new Date(l.timestamp), rate: l.ferias?.base_hourly_rate };
         } else if (l.action_type === 'Salida' && uData.lastIn) {
-          uData.totalMs += new Date(l.timestamp) - uData.lastIn;
+          const ms = new Date(l.timestamp) - uData.lastIn.ts;
+          uData.totalMs += ms;
+          const shiftRate = (uData.lastIn.rate > 0) ? uData.lastIn.rate : uData.defaultRate;
+          uData.totalEarnings += (ms / 3600000) * shiftRate;
           uData.lastIn = null;
         }
-      });
-      Object.keys(logsByUser).forEach(uid => {
-        totalMsByUser[uid] = logsByUser[uid].totalMs;
       });
     }
 
     if (!pError && profiles) {
       this.state.users = profiles.map(u => {
-        const ms = totalMsByUser[u.id] || 0;
+        const stats = statsByUser[u.id] || { totalMs: 0, totalEarnings: 0 };
+        const ms = stats.totalMs;
         const hrs = Math.floor(ms / 1000 / 60 / 60);
         const mins = Math.floor((ms / 1000 / 60) % 60);
         return {
@@ -220,6 +227,7 @@ const app = {
           lastAccess: u.last_access || 'Nunca',
           totalHours: hrs > 0 || mins > 0 ? `${hrs}h ${mins}m` : '0h 0m',
           totalMs: ms,
+          totalEarnings: stats.totalEarnings,
           hourlyRate: Number(u.hourly_rate) || 0,
         };
       }).sort((a, b) => a.name.localeCompare(b.name));
@@ -753,6 +761,31 @@ const app = {
     `;
   },
 
+  async applyGlobalRate() {
+    const input = document.getElementById('globalRateInput');
+    const newRate = Number(input.value);
+    if (!isFinite(newRate) || newRate < 0) { alert('Introduce un precio válido.'); return; }
+    
+    if (!confirm(`¿Estás seguro de establecer ${newRate} €/h a todos los empleados en sistema?`)) return;
+    
+    const userIds = this.state.users.filter(u => u.role !== 'Admin').map(u => u.id);
+    if (userIds.length === 0) { alert('No hay empleados a los que aplicar la tarifa.'); return; }
+    
+    const saveBtn = document.getElementById('applyGlobalRateBtn');
+    saveBtn.disabled = true; saveBtn.textContent = 'Aplicando...';
+    
+    const { error } = await supabase.from('profiles').update({ hourly_rate: newRate }).in('id', userIds);
+    if (error) { 
+        alert('Error al aplicar la tarifa: ' + error.message); 
+        saveBtn.disabled = false; saveBtn.textContent = 'Aplicar a todos';
+        return; 
+    }
+    
+    alert(`Tarifa de ${newRate} €/h aplicada a ${userIds.length} empleados correctamentee.`);
+    await this.loadUsers();
+    this.renderView('users');
+  },
+
   getUsersHTML() {
     return `
       <div style="margin-bottom:2rem;display:flex;justify-content:space-between;align-items:center;">
@@ -762,6 +795,21 @@ const app = {
         </div>
         <button class="btn btn-primary btn-add-user">Añadir Usuario</button>
       </div>
+      
+      ${isAdmin ? `
+      <div class="card" style="margin-bottom:2rem;padding:1.5rem;background:#f8fafc;border:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;border-radius:12px;">
+        <div>
+           <h3 style="font-size:1.05rem;font-weight:700;color:var(--text-main);margin:0;">Tarifa Global por Defecto</h3>
+           <p style="font-size:0.85rem;color:var(--text-secondary);margin:0.25rem 0 0;">Establece el precio por hora para todos los trabajadores simultáneamente.</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.75rem;">
+           <input type="number" id="globalRateInput" value="10" step="0.5" style="width:80px;padding:0.6rem;border-radius:8px;border:1px solid #cbd5e1;text-align:right;font-size:1rem;font-weight:600;">
+           <span style="font-weight:600;color:var(--text-secondary);">€/h</span>
+           <button id="applyGlobalRateBtn" class="btn btn-primary" onclick="app.applyGlobalRate()" style="padding:0.6rem 1.25rem;font-weight:600;">Aplicar a todos</button>
+        </div>
+      </div>
+      ` : ''}
+
       <div class="table-container">
         <div class="table-header">
           <h3 style="font-size:1rem;font-weight:600;">Directorio de Personal</h3>
@@ -786,12 +834,12 @@ const app = {
     const roleClass   = 'badge-' + user.role.toLowerCase();
     const statusClass = 'badge-' + user.status.toLowerCase();
     const safeName = user.name.replace(/'/g, "\\'");
-    const earnings = (user.totalMs / 3600000) * (user.hourlyRate || 0);
+    const earnings = user.totalEarnings || 0;
     const rateCell = isAdmin
-      ? `<td onclick="event.stopPropagation()" style="cursor:pointer;" onclick="window.editHourlyRate('${user.id}','${safeName}',${user.hourlyRate || 0})">
+      ? `<td onclick="event.stopPropagation()" style="cursor:pointer;" onclick="window.editHourlyRate('${user.id}','${safeName}',${user.hourlyRate || 10})">
           <div style="display:flex;align-items:center;gap:0.4rem;">
-            <span style="font-weight:600;">${(user.hourlyRate || 0).toFixed(2)} €</span>
-            <button onclick="event.stopPropagation(); window.editHourlyRate('${user.id}','${safeName}',${user.hourlyRate || 0})" title="Editar precio/hora" style="background:none;border:none;cursor:pointer;padding:0.2rem;border-radius:4px;color:#64748b;" onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='none'">
+            <span style="font-weight:600;">${(user.hourlyRate || 10).toFixed(2)} €</span>
+            <button onclick="event.stopPropagation(); window.editHourlyRate('${user.id}','${safeName}',${user.hourlyRate || 10})" title="Editar precio/hora" style="background:none;border:none;cursor:pointer;padding:0.2rem;border-radius:4px;color:#64748b;" onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='none'">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
             </button>
           </div>
@@ -799,7 +847,7 @@ const app = {
         <td style="font-weight:700;color:#16a34a;">${earnings.toFixed(2)} €</td>`
       : '';
     return `
-      <tr onclick="window.showHorasPorFeria('${user.id}', '${safeName}', ${user.hourlyRate || 0})" style="cursor:pointer;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+      <tr onclick="window.showHorasPorFeria('${user.id}', '${safeName}', ${user.hourlyRate || 10})" style="cursor:pointer;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
         <td>
           <div style="display:flex;align-items:center;gap:0.75rem;">
             <div style="width:32px;height:32px;background:#e2e8f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#64748b;font-size:0.75rem;">
@@ -1068,6 +1116,7 @@ const app = {
                 <div class="feria-date">${new Date(f.start_date).toLocaleDateString('es-ES')} - ${new Date(f.end_date).toLocaleDateString('es-ES')}</div>
                 <div class="feria-name">${f.name}</div>
                 <div class="feria-loc">${f.location}</div>
+                ${f.base_hourly_rate > 0 ? `<div style="font-size:0.75rem;color:#16a34a;margin-top:0.25rem;font-weight:700;">💰 ${f.base_hourly_rate} €/h (Tarifa Fija)</div>` : ''}
                 <div style="font-size:0.75rem;color:var(--primary);margin-top:0.25rem;font-weight:600;">👥 ${f.workerCount || 0} Personal Asignado</div>
               </div>
               <div style="display:flex; flex-direction:column; gap:0.5rem; align-items:flex-end;">
@@ -1083,6 +1132,8 @@ const app = {
   },
 
   injectFeriaModal() {
+    const existing = document.getElementById('feriaModalOverlay');
+    if (existing) existing.remove();
     const HTML = `
       <div id="feriaModalOverlay" class="modal-overlay">
         <div class="modal">
@@ -1098,6 +1149,10 @@ const app = {
                 <div><label>Fecha Fin</label><input type="date" id="feriaEnd" class="input-field" required></div>
               </div>
               <div class="form-group"><label>Ubicación</label><input type="text" id="feriaLoc" class="input-field" required></div>
+              <div class="form-group">
+                <label>Precio por hora en esta feria (€) <span style="font-weight:400;color:var(--text-secondary);font-size:0.8rem;">(Opcional, sobreescribe la tarifa del empleado)</span></label>
+                <input type="number" step="0.5" id="feriaRate" class="input-field" placeholder="Ej. 12.5" />
+              </div>
               <div class="form-group">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
                   <label style="margin:0;">Trabajadores Asignados</label>
@@ -1120,6 +1175,8 @@ const app = {
   },
 
   injectWorkersModal() {
+    const existing = document.getElementById('workersModalOverlay');
+    if (existing) existing.remove();
     const HTML = `
       <div id="workersModalOverlay" class="modal-overlay">
         <div class="modal" style="max-width:400px;">
@@ -1149,6 +1206,8 @@ const app = {
   },
 
   injectEditFeriaModal() {
+    const existing = document.getElementById('editFeriaModalOverlay');
+    if (existing) existing.remove();
     const HTML = `
       <div id="editFeriaModalOverlay" class="modal-overlay">
         <div class="modal">
@@ -1165,6 +1224,10 @@ const app = {
                 <div><label>Fecha Fin</label><input type="date" id="editFeriaEnd" class="input-field" required></div>
               </div>
               <div class="form-group"><label>Ubicación</label><input type="text" id="editFeriaLoc" class="input-field" required></div>
+              <div class="form-group">
+                <label>Precio por hora en esta feria (€) <span style="font-weight:400;color:var(--text-secondary);font-size:0.8rem;">(Opcional, sobreescribe la tarifa del empleado)</span></label>
+                <input type="number" step="0.5" id="editFeriaRate" class="input-field" placeholder="Ej. 12.5" />
+              </div>
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-ghost" onclick="document.getElementById('editFeriaModalOverlay').classList.remove('active')">Cancelar</button>
@@ -1185,6 +1248,7 @@ const app = {
     document.getElementById('editFeriaStart').value = f.start_date;
     document.getElementById('editFeriaEnd').value = f.end_date;
     document.getElementById('editFeriaLoc').value = f.location;
+    document.getElementById('editFeriaRate').value = f.base_hourly_rate > 0 ? f.base_hourly_rate : '';
     document.getElementById('editFeriaModalOverlay').classList.add('active');
   },
 
@@ -1194,13 +1258,15 @@ const app = {
     const start_date = document.getElementById('editFeriaStart').value;
     const end_date = document.getElementById('editFeriaEnd').value;
     const location = document.getElementById('editFeriaLoc').value;
+    const rateVal = document.getElementById('editFeriaRate').value;
+    const base_hourly_rate = rateVal ? Number(rateVal) : 0;
 
     const btn = document.querySelector('#editFeriaForm button[type="submit"]');
     btn.disabled = true;
     btn.textContent = 'Guardando...';
 
     const { error } = await supabase.from('ferias').update({
-      name, start_date, end_date, location
+      name, start_date, end_date, location, base_hourly_rate
     }).eq('id', id);
 
     btn.disabled = false;
@@ -1268,11 +1334,14 @@ const app = {
     document.getElementById('feriaModalOverlay').classList.add('active');
   },
   async addFeria() {
+    const rateVal = document.getElementById('feriaRate').value;
+    const base_hourly_rate = rateVal ? Number(rateVal) : 0;
     const { data: insertedFeria, error } = await supabase.from('ferias').insert({
       name: document.getElementById('feriaName').value,
       start_date: document.getElementById('feriaStart').value,
       end_date: document.getElementById('feriaEnd').value,
-      location: document.getElementById('feriaLoc').value
+      location: document.getElementById('feriaLoc').value,
+      base_hourly_rate
     }).select('id').single();
 
     if (!error && insertedFeria) {
@@ -1379,7 +1448,7 @@ window.toggleAllWorkers = function(checkboxName, btnId) {
 };
 
 window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
-  hourlyRate = Number(hourlyRate) || 0;
+  hourlyRate = Number(hourlyRate) || 10;
   const existing = document.getElementById('horasFeriaModal');
   if (existing) existing.remove();
 
@@ -1395,7 +1464,7 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
 
   const { data: logs } = await supabase
     .from('time_logs')
-    .select('*, ferias(id, name, start_date, end_date)')
+    .select('*, ferias(id, name, start_date, end_date, base_hourly_rate)')
     .eq('user_id', userId)
     .order('timestamp', { ascending: true });
 
@@ -1418,9 +1487,10 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
     const feriaName = log.ferias?.name  || 'Sin feria asignada';
     const feriaStart = log.ferias?.start_date || null;
     const feriaEnd   = log.ferias?.end_date   || null;
+    const feriaBaseRate = log.ferias?.base_hourly_rate || 0;
 
     if (!feriaMap[feriaId]) {
-      feriaMap[feriaId] = { name: feriaName, start: feriaStart, end: feriaEnd, totalMs: 0, days: {} };
+      feriaMap[feriaId] = { name: feriaName, start: feriaStart, end: feriaEnd, baseRate: feriaBaseRate, totalMs: 0, days: {} };
     }
 
     if (log.action_type === 'Entrada') {
@@ -1481,6 +1551,10 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
 
   const feriaEntries = Object.entries(feriaMap);
   const totalMs = feriaEntries.reduce((acc, [, f]) => acc + f.totalMs, 0);
+  const totalFeriaEarnings = feriaEntries.reduce((acc, [, f]) => {
+     const effRate = f.baseRate > 0 ? f.baseRate : hourlyRate;
+     return acc + ((f.totalMs / 3600000) * effRate);
+  }, 0);
   const initials = userName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
 
   const feriaBlocks = feriaEntries.length > 0
@@ -1518,6 +1592,7 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
                 <td style="padding:0.6rem 0.75rem;font-size:0.85rem;font-weight:600;color:#16a34a;border-bottom:1px solid #f1f5f9;">${t.entryTime}</td>
                 <td style="padding:0.6rem 0.75rem;font-size:0.85rem;border-bottom:1px solid #f1f5f9;">${exitLabel}</td>
                 <td style="padding:0.6rem 1rem 0.6rem 0.75rem;text-align:right;font-weight:700;font-size:0.9rem;color:var(--primary);border-bottom:1px solid #f1f5f9;">${fmtMs(t.ms)}</td>
+                ${isAdmin ? `<td style="padding:0.6rem 0.75rem;text-align:right;font-weight:700;font-size:0.85rem;color:#16a34a;border-bottom:1px solid #f1f5f9;">${((t.ms / 3600000) * effectiveRate).toFixed(2)} €</td>` : ''}
                 ${actionsCell}
               </tr>`;
           }).join('');
@@ -1528,13 +1603,15 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
             ? `<tr style="background:#eff6ff;">
                 <td colspan="${subtotalColspan}" style="padding:0.35rem 1rem 0.35rem 2rem;font-size:0.75rem;color:#2563eb;font-weight:600;border-bottom:1px solid #dbeafe;">Total del día</td>
                 <td style="padding:0.35rem 1rem 0.35rem 0.75rem;text-align:right;font-weight:800;font-size:0.82rem;color:#1d4ed8;border-bottom:1px solid #dbeafe;">${fmtMs(dayData.totalMs)}</td>
+                ${isAdmin ? `<td style="padding:0.35rem 0.75rem;text-align:right;font-weight:800;font-size:0.82rem;color:#16a34a;border-bottom:1px solid #dbeafe;">${((dayData.totalMs / 3600000) * effectiveRate).toFixed(2)} €</td><td style="border-bottom:1px solid #dbeafe;"></td>` : ''}
                </tr>`
             : '';
 
           return rows + subtotal;
         }).join('');
 
-        const feriaEarnings = (f.totalMs / 3600000) * hourlyRate;
+        const effectiveRate = f.baseRate > 0 ? f.baseRate : hourlyRate;
+        const feriaEarnings = (f.totalMs / 3600000) * effectiveRate;
         const isRealFeria = feriaId && feriaId !== '__sin_feria__';
         const addBtn = isAdmin && isRealFeria
           ? `<div style="padding:0.6rem 1rem;background:#fafafa;border-top:1px solid #e2e8f0;text-align:center;">
@@ -1549,12 +1626,13 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
             <div style="background:linear-gradient(90deg,#f8fafc,#f1f5f9);padding:0.9rem 1rem;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e2e8f0;">
               <div>
                 <div style="font-weight:700;font-size:0.95rem;color:var(--text-main);">📌 ${f.name}</div>
+                ${f.baseRate > 0 ? `<div style="font-size:0.75rem;color:#16a34a;margin-top:0.15rem;font-weight:700;">💰 ${f.baseRate} €/h (Tarifa de feria)</div>` : ''}
                 ${f.start ? `<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.15rem;">📅 ${f.start} — ${f.end}</div>` : ''}
               </div>
               <div style="text-align:right;">
                 <div style="font-weight:800;font-size:1.1rem;color:var(--primary);">${fmtMs(f.totalMs)}</div>
                 <div style="font-size:0.72rem;color:var(--text-secondary);">${dayEntries.length} día${dayEntries.length !== 1 ? 's' : ''}</div>
-                ${isAdmin && hourlyRate > 0 ? `<div style="margin-top:0.3rem;font-weight:700;font-size:0.9rem;color:#16a34a;">${feriaEarnings.toFixed(2)} €</div>` : ''}
+                ${isAdmin && effectiveRate > 0 ? `<div style="margin-top:0.3rem;font-weight:700;font-size:0.9rem;color:#16a34a;">${feriaEarnings.toFixed(2)} €</div>` : ''}
               </div>
             </div>
             <table style="width:100%;border-collapse:collapse;">
@@ -1564,7 +1642,8 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
                   <th style="padding:0.5rem 0.75rem;text-align:left;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Entrada</th>
                   <th style="padding:0.5rem 0.75rem;text-align:left;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Salida</th>
                   <th style="padding:0.5rem 1rem 0.5rem 0.75rem;text-align:right;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Horas</th>
-                  ${isAdmin ? `<th style="padding:0.5rem 0.75rem;text-align:center;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Acciones</th>` : ''}
+                  ${isAdmin ? `<th style="padding:0.5rem 0.75rem;text-align:right;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">A Cobrar</th>
+                  <th style="padding:0.5rem 0.75rem;text-align:center;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Acciones</th>` : ''}
                 </tr>
               </thead>
               <tbody>${dayRows}</tbody>
@@ -1597,7 +1676,7 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
       </div>
       <div style="text-align:right;">
         <div style="font-size:2rem;font-weight:800;color:#1d4ed8;line-height:1;">${fmtMs(totalMs)}</div>
-        ${isAdmin && hourlyRate > 0 ? `<div style="font-size:1.2rem;font-weight:800;color:#16a34a;margin-top:0.3rem;">${((totalMs / 3600000) * hourlyRate).toFixed(2)} €</div>` : ''}
+        ${isAdmin && totalFeriaEarnings > 0 ? `<div style="font-size:1.2rem;font-weight:800;color:#16a34a;margin-top:0.3rem;">${totalFeriaEarnings.toFixed(2)} €</div>` : ''}
       </div>
     </div>` : ''}
 
@@ -1611,7 +1690,7 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
 
 window.editHourlyRate = async function(userId, userName, currentRate) {
   if (!isAdmin) { alert('Solo los administradores pueden cambiar el precio por hora.'); return; }
-  const input = prompt(`Precio por hora de ${userName} (€)\nDeja en blanco para cancelar.`, String(currentRate || 0));
+  const input = prompt(`Precio por hora de ${userName} (€)\nDeja en blanco para cancelar.`, String(currentRate || 10));
   if (input === null) return;
   const trimmed = input.trim().replace(',', '.');
   if (trimmed === '') return;
