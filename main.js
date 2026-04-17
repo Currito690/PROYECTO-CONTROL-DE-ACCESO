@@ -1559,6 +1559,7 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
 
   const feriaBlocks = feriaEntries.length > 0
     ? feriaEntries.map(([feriaId, f]) => {
+        const effectiveRate = f.baseRate > 0 ? f.baseRate : hourlyRate;
         const dayEntries = Object.entries(f.days).sort((a, b) => {
           const parse = s => {
             const parts = s.split(', ')[1]?.split('/') || [];
@@ -1610,7 +1611,6 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
           return rows + subtotal;
         }).join('');
 
-        const effectiveRate = f.baseRate > 0 ? f.baseRate : hourlyRate;
         const feriaEarnings = (f.totalMs / 3600000) * effectiveRate;
         const isRealFeria = feriaId && feriaId !== '__sin_feria__';
         const addBtn = isAdmin && isRealFeria
