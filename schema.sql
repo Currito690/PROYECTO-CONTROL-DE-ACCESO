@@ -54,3 +54,16 @@ CREATE TABLE IF NOT EXISTS feria_workers (
 ALTER TABLE feria_workers ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Admin manage feria_workers" ON feria_workers FOR ALL TO authenticated USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'Admin' OR auth.email() = 'macario@duke.com');
 CREATE POLICY "Users view assigned ferias" ON feria_workers FOR SELECT TO authenticated USING (user_id = auth.uid() OR (SELECT role FROM profiles WHERE id = auth.uid()) = 'Admin');
+
+-- 4. Precio por hora en profiles + permisos admin para editar fichajes
+-- Ejecuta este bloque una sola vez en el SQL Editor de Supabase.
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC DEFAULT 0;
+
+DROP POLICY IF EXISTS "Admin update any time log" ON time_logs;
+CREATE POLICY "Admin update any time log" ON time_logs FOR UPDATE TO authenticated USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'Admin' OR auth.email() = 'macario@duke.com');
+
+DROP POLICY IF EXISTS "Admin delete any time log" ON time_logs;
+CREATE POLICY "Admin delete any time log" ON time_logs FOR DELETE TO authenticated USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'Admin' OR auth.email() = 'macario@duke.com');
+
+DROP POLICY IF EXISTS "Admin update any profile" ON profiles;
+CREATE POLICY "Admin update any profile" ON profiles FOR UPDATE TO authenticated USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'Admin' OR auth.email() = 'macario@duke.com');

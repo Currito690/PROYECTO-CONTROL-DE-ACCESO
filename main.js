@@ -218,7 +218,9 @@ const app = {
           role: u.role,
           status: u.status,
           lastAccess: u.last_access || 'Nunca',
-          totalHours: hrs > 0 || mins > 0 ? `${hrs}h ${mins}m` : '0h 0m'
+          totalHours: hrs > 0 || mins > 0 ? `${hrs}h ${mins}m` : '0h 0m',
+          totalMs: ms,
+          hourlyRate: Number(u.hourly_rate) || 0,
         };
       }).sort((a, b) => a.name.localeCompare(b.name));
     }
@@ -767,12 +769,12 @@ const app = {
         <table>
           <thead>
             <tr>
-              <th>Usuario</th><th>Rol</th><th>Estado</th><th>Horas Acumuladas</th><th>Último Acceso</th><th>Acciones</th>
+              <th>Usuario</th><th>Rol</th><th>Estado</th><th>Horas</th>${isAdmin ? '<th>€/hora</th><th>Ganancias</th>' : ''}<th>Último Acceso</th><th>Acciones</th>
             </tr>
           </thead>
           <tbody>
             ${this.state.users.length === 0
-              ? `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:2rem;">No hay usuarios todavía.</td></tr>`
+              ? `<tr><td colspan="${isAdmin ? 8 : 6}" style="text-align:center;color:var(--text-muted);padding:2rem;">No hay usuarios todavía.</td></tr>`
               : this.state.users.map(u => this.renderUserRow(u)).join('')
             }
           </tbody>
@@ -784,8 +786,20 @@ const app = {
     const roleClass   = 'badge-' + user.role.toLowerCase();
     const statusClass = 'badge-' + user.status.toLowerCase();
     const safeName = user.name.replace(/'/g, "\\'");
+    const earnings = (user.totalMs / 3600000) * (user.hourlyRate || 0);
+    const rateCell = isAdmin
+      ? `<td onclick="event.stopPropagation()" style="cursor:pointer;" onclick="window.editHourlyRate('${user.id}','${safeName}',${user.hourlyRate || 0})">
+          <div style="display:flex;align-items:center;gap:0.4rem;">
+            <span style="font-weight:600;">${(user.hourlyRate || 0).toFixed(2)} €</span>
+            <button onclick="event.stopPropagation(); window.editHourlyRate('${user.id}','${safeName}',${user.hourlyRate || 0})" title="Editar precio/hora" style="background:none;border:none;cursor:pointer;padding:0.2rem;border-radius:4px;color:#64748b;" onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='none'">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+            </button>
+          </div>
+        </td>
+        <td style="font-weight:700;color:#16a34a;">${earnings.toFixed(2)} €</td>`
+      : '';
     return `
-      <tr onclick="window.showHorasPorFeria('${user.id}', '${safeName}')" style="cursor:pointer;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+      <tr onclick="window.showHorasPorFeria('${user.id}', '${safeName}', ${user.hourlyRate || 0})" style="cursor:pointer;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
         <td>
           <div style="display:flex;align-items:center;gap:0.75rem;">
             <div style="width:32px;height:32px;background:#e2e8f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#64748b;font-size:0.75rem;">
@@ -800,6 +814,7 @@ const app = {
         <td><span class="badge ${roleClass}">${user.role}</span></td>
         <td><span class="badge ${statusClass}">${user.status}</span></td>
         <td style="font-weight:700; color:var(--primary);">${user.totalHours}</td>
+        ${rateCell}
         <td style="color:var(--text-secondary);">${user.lastAccess}</td>
         <td onclick="event.stopPropagation()">
           <button class="btn btn-primary" title="Ver Historial, Horas y GPS" style="padding:0.4rem 0.8rem; font-size:0.75rem; margin-right:0.5rem;" onclick="app.viewUserHistory('${user.id}', '${safeName}')">
@@ -1363,7 +1378,8 @@ window.toggleAllWorkers = function(checkboxName, btnId) {
   if (btn) btn.textContent = allChecked ? 'Seleccionar todos' : 'Deseleccionar todos';
 };
 
-window.showHorasPorFeria = async function(userId, userName) {
+window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
+  hourlyRate = Number(hourlyRate) || 0;
   const existing = document.getElementById('horasFeriaModal');
   if (existing) existing.remove();
 
@@ -1371,7 +1387,7 @@ window.showHorasPorFeria = async function(userId, userName) {
   overlay.id = 'horasFeriaModal';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(2px);';
   overlay.innerHTML = `
-    <div style="background:white;border-radius:16px;padding:2rem;max-width:640px;width:100%;max-height:88vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.15);">
+    <div style="background:white;border-radius:16px;padding:2rem;max-width:760px;width:100%;max-height:88vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.15);">
       <div style="text-align:center;padding:2rem;color:var(--text-secondary);">Cargando datos...</div>
     </div>`;
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -1410,7 +1426,7 @@ window.showHorasPorFeria = async function(userId, userName) {
     if (log.action_type === 'Entrada') {
       const entryTs = new Date(log.timestamp);
       const dayKey  = fmtDate(entryTs);
-      pendingEntry  = { ts: entryTs, dayKey, feriaId, entryTime: fmtTime(entryTs) };
+      pendingEntry  = { ts: entryTs, dayKey, feriaId, entryTime: fmtTime(entryTs), entryLogId: log.id };
       if (!feriaMap[feriaId].days[dayKey]) {
         feriaMap[feriaId].days[dayKey] = { totalMs: 0, turnos: [] };
       }
@@ -1434,6 +1450,10 @@ window.showHorasPorFeria = async function(userId, userName) {
         exitDayShort: overnight
           ? exitTs.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })
           : null,
+        entryLogId: pendingEntry.entryLogId,
+        exitLogId: log.id,
+        entryIso: pendingEntry.ts.toISOString(),
+        exitIso: exitTs.toISOString(),
       });
       pendingEntry = null;
 
@@ -1452,6 +1472,10 @@ window.showHorasPorFeria = async function(userId, userName) {
     f.days[pendingEntry.dayKey].turnos.push({
       entryTime: pendingEntry.entryTime,
       exitTime: null, ms, overnight: false, active: true,
+      entryLogId: pendingEntry.entryLogId,
+      exitLogId: null,
+      entryIso: pendingEntry.ts.toISOString(),
+      exitIso: null,
     });
   }
 
@@ -1460,7 +1484,7 @@ window.showHorasPorFeria = async function(userId, userName) {
   const initials = userName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
 
   const feriaBlocks = feriaEntries.length > 0
-    ? feriaEntries.map(([, f]) => {
+    ? feriaEntries.map(([feriaId, f]) => {
         const dayEntries = Object.entries(f.days).sort((a, b) => {
           const parse = s => {
             const parts = s.split(', ')[1]?.split('/') || [];
@@ -1476,19 +1500,33 @@ window.showHorasPorFeria = async function(userId, userName) {
               : t.overnight
                 ? `${t.exitTime}&nbsp;<span title="Salida al día siguiente" style="background:#fef3c7;color:#92400e;border-radius:4px;padding:0.1rem 0.35rem;font-size:0.7rem;font-weight:700;">+1 día (${t.exitDayShort})</span>`
                 : t.exitTime;
+            const actionsCell = isAdmin && !t.active
+              ? `<td style="padding:0.6rem 0.75rem;text-align:center;border-bottom:1px solid #f1f5f9;white-space:nowrap;">
+                  <button onclick="window.openShiftModal({mode:'edit',userId:'${userId}',userName:'${userName.replace(/'/g, "\\'")}',hourlyRate:${hourlyRate},feriaId:'${feriaId}',entryLogId:'${t.entryLogId}',exitLogId:'${t.exitLogId}',entryIso:'${t.entryIso}',exitIso:'${t.exitIso}'})" title="Editar turno" style="background:none;border:none;cursor:pointer;padding:0.25rem;border-radius:4px;color:#2563eb;" onmouseover="this.style.background='#dbeafe'" onmouseout="this.style.background='none'">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                  </button>
+                  <button onclick="window.deleteShiftAdmin('${t.entryLogId}','${t.exitLogId}','${userId}','${userName.replace(/'/g, "\\'")}',${hourlyRate})" title="Eliminar turno" style="background:none;border:none;cursor:pointer;padding:0.25rem;border-radius:4px;color:#dc2626;margin-left:0.25rem;" onmouseover="this.style.background='#fee2e2'" onmouseout="this.style.background='none'">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                  </button>
+                 </td>`
+              : isAdmin
+                ? `<td style="padding:0.6rem 0.75rem;text-align:center;border-bottom:1px solid #f1f5f9;color:var(--text-muted);font-size:0.75rem;">—</td>`
+                : '';
             return `
               <tr style="background:${idx % 2 === 0 ? '#fafafa' : 'white'};">
                 <td style="padding:0.6rem 1rem 0.6rem 2rem;font-size:0.82rem;color:var(--text-secondary);border-bottom:1px solid #f1f5f9;">${dayKey}</td>
                 <td style="padding:0.6rem 0.75rem;font-size:0.85rem;font-weight:600;color:#16a34a;border-bottom:1px solid #f1f5f9;">${t.entryTime}</td>
                 <td style="padding:0.6rem 0.75rem;font-size:0.85rem;border-bottom:1px solid #f1f5f9;">${exitLabel}</td>
                 <td style="padding:0.6rem 1rem 0.6rem 0.75rem;text-align:right;font-weight:700;font-size:0.9rem;color:var(--primary);border-bottom:1px solid #f1f5f9;">${fmtMs(t.ms)}</td>
+                ${actionsCell}
               </tr>`;
           }).join('');
 
           // Subtotal si hay más de un turno en el mismo día
+          const subtotalColspan = isAdmin ? 4 : 3;
           const subtotal = dayData.turnos.length > 1
             ? `<tr style="background:#eff6ff;">
-                <td colspan="3" style="padding:0.35rem 1rem 0.35rem 2rem;font-size:0.75rem;color:#2563eb;font-weight:600;border-bottom:1px solid #dbeafe;">Total del día</td>
+                <td colspan="${subtotalColspan}" style="padding:0.35rem 1rem 0.35rem 2rem;font-size:0.75rem;color:#2563eb;font-weight:600;border-bottom:1px solid #dbeafe;">Total del día</td>
                 <td style="padding:0.35rem 1rem 0.35rem 0.75rem;text-align:right;font-weight:800;font-size:0.82rem;color:#1d4ed8;border-bottom:1px solid #dbeafe;">${fmtMs(dayData.totalMs)}</td>
                </tr>`
             : '';
@@ -1496,6 +1534,16 @@ window.showHorasPorFeria = async function(userId, userName) {
           return rows + subtotal;
         }).join('');
 
+        const feriaEarnings = (f.totalMs / 3600000) * hourlyRate;
+        const isRealFeria = feriaId && feriaId !== '__sin_feria__';
+        const addBtn = isAdmin && isRealFeria
+          ? `<div style="padding:0.6rem 1rem;background:#fafafa;border-top:1px solid #e2e8f0;text-align:center;">
+              <button onclick="window.openShiftModal({mode:'add',userId:'${userId}',userName:'${userName.replace(/'/g, "\\'")}',hourlyRate:${hourlyRate},feriaId:'${feriaId}',feriaName:'${(f.name || '').replace(/'/g, "\\'")}',feriaStart:'${f.start || ''}',feriaEnd:'${f.end || ''}'})" style="background:#2563eb;color:white;border:none;padding:0.5rem 1rem;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:600;display:inline-flex;align-items:center;gap:0.4rem;" onmouseover="this.style.background='#1d4ed8'" onmouseout="this.style.background='#2563eb'">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Añadir turno manual
+              </button>
+             </div>`
+          : '';
         return `
           <div style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:1.25rem;">
             <div style="background:linear-gradient(90deg,#f8fafc,#f1f5f9);padding:0.9rem 1rem;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e2e8f0;">
@@ -1506,6 +1554,7 @@ window.showHorasPorFeria = async function(userId, userName) {
               <div style="text-align:right;">
                 <div style="font-weight:800;font-size:1.1rem;color:var(--primary);">${fmtMs(f.totalMs)}</div>
                 <div style="font-size:0.72rem;color:var(--text-secondary);">${dayEntries.length} día${dayEntries.length !== 1 ? 's' : ''}</div>
+                ${isAdmin && hourlyRate > 0 ? `<div style="margin-top:0.3rem;font-weight:700;font-size:0.9rem;color:#16a34a;">${feriaEarnings.toFixed(2)} €</div>` : ''}
               </div>
             </div>
             <table style="width:100%;border-collapse:collapse;">
@@ -1515,10 +1564,12 @@ window.showHorasPorFeria = async function(userId, userName) {
                   <th style="padding:0.5rem 0.75rem;text-align:left;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Entrada</th>
                   <th style="padding:0.5rem 0.75rem;text-align:left;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Salida</th>
                   <th style="padding:0.5rem 1rem 0.5rem 0.75rem;text-align:right;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Horas</th>
+                  ${isAdmin ? `<th style="padding:0.5rem 0.75rem;text-align:center;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Acciones</th>` : ''}
                 </tr>
               </thead>
               <tbody>${dayRows}</tbody>
             </table>
+            ${addBtn}
           </div>`;
       }).join('')
     : `<div style="text-align:center;padding:3rem;color:var(--text-muted);">Este empleado no tiene fichajes registrados.</div>`;
@@ -1539,12 +1590,15 @@ window.showHorasPorFeria = async function(userId, userName) {
     </div>
 
     ${feriaEntries.length > 0 ? `
-    <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #bfdbfe;border-radius:12px;padding:1rem 1.5rem;margin-bottom:1.5rem;display:flex;justify-content:space-between;align-items:center;">
+    <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #bfdbfe;border-radius:12px;padding:1rem 1.5rem;margin-bottom:1.5rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
       <div>
         <div style="font-size:0.8rem;font-weight:600;color:#1d4ed8;text-transform:uppercase;letter-spacing:0.05em;">Total acumulado</div>
-        <div style="font-size:0.75rem;color:#3b82f6;margin-top:0.1rem;">${feriaEntries.length} feria${feriaEntries.length !== 1 ? 's' : ''}</div>
+        <div style="font-size:0.75rem;color:#3b82f6;margin-top:0.1rem;">${feriaEntries.length} feria${feriaEntries.length !== 1 ? 's' : ''}${isAdmin && hourlyRate > 0 ? ` · ${hourlyRate.toFixed(2)} €/h` : ''}</div>
       </div>
-      <div style="font-size:2rem;font-weight:800;color:#1d4ed8;">${fmtMs(totalMs)}</div>
+      <div style="text-align:right;">
+        <div style="font-size:2rem;font-weight:800;color:#1d4ed8;line-height:1;">${fmtMs(totalMs)}</div>
+        ${isAdmin && hourlyRate > 0 ? `<div style="font-size:1.2rem;font-weight:800;color:#16a34a;margin-top:0.3rem;">${((totalMs / 3600000) * hourlyRate).toFixed(2)} €</div>` : ''}
+      </div>
     </div>` : ''}
 
     ${feriaBlocks}
@@ -1553,6 +1607,119 @@ window.showHorasPorFeria = async function(userId, userName) {
       <button onclick="document.getElementById('horasFeriaModal').remove()" style="background:none;border:1px solid #e2e8f0;border-radius:8px;padding:0.5rem 1.5rem;cursor:pointer;color:var(--text-secondary);font-size:0.9rem;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='none'">Cerrar</button>
     </div>
   `;
+};
+
+window.editHourlyRate = async function(userId, userName, currentRate) {
+  if (!isAdmin) { alert('Solo los administradores pueden cambiar el precio por hora.'); return; }
+  const input = prompt(`Precio por hora de ${userName} (€)\nDeja en blanco para cancelar.`, String(currentRate || 0));
+  if (input === null) return;
+  const trimmed = input.trim().replace(',', '.');
+  if (trimmed === '') return;
+  const newRate = Number(trimmed);
+  if (!isFinite(newRate) || newRate < 0) { alert('Valor no válido. Introduce un número positivo.'); return; }
+  const { error } = await supabase.from('profiles').update({ hourly_rate: newRate }).eq('id', userId);
+  if (error) { alert('Error guardando el precio/hora: ' + error.message); return; }
+  await app.loadUsers();
+  if (app.state.activeView === 'users') app.renderView('users');
+  const modal = document.getElementById('horasFeriaModal');
+  if (modal) { modal.remove(); window.showHorasPorFeria(userId, userName, newRate); }
+};
+
+window.openShiftModal = function(opts) {
+  if (!isAdmin) { alert('Solo los administradores pueden editar turnos.'); return; }
+  const existing = document.getElementById('shiftEditModal');
+  if (existing) existing.remove();
+
+  const toLocalInput = iso => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const isEdit = opts.mode === 'edit';
+  const defaultEntry = isEdit ? toLocalInput(opts.entryIso) : (opts.feriaStart ? `${opts.feriaStart}T09:00` : '');
+  const defaultExit  = isEdit ? toLocalInput(opts.exitIso)  : (opts.feriaStart ? `${opts.feriaStart}T17:00` : '');
+
+  const overlay = document.createElement('div');
+  overlay.id = 'shiftEditModal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.6);z-index:1100;display:flex;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(3px);';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:16px;padding:1.75rem;max-width:440px;width:100%;box-shadow:0 25px 50px rgba(0,0,0,0.2);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.25rem;">
+        <div>
+          <h3 style="font-size:1.15rem;font-weight:800;margin:0;color:var(--text-main);">${isEdit ? 'Editar turno' : 'Añadir turno manual'}</h3>
+          <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.25rem 0 0;">${opts.userName}${opts.feriaName ? ' · ' + opts.feriaName : ''}</p>
+        </div>
+        <button onclick="document.getElementById('shiftEditModal').remove()" style="background:none;border:none;cursor:pointer;padding:0.4rem;color:var(--text-secondary);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0.9rem;">
+        <div>
+          <label style="display:block;font-size:0.8rem;font-weight:600;color:var(--text-main);margin-bottom:0.35rem;">Entrada</label>
+          <input type="datetime-local" id="shiftEntryInput" value="${defaultEntry}" style="width:100%;padding:0.6rem 0.75rem;border:1px solid #e2e8f0;border-radius:8px;font-size:0.9rem;">
+        </div>
+        <div>
+          <label style="display:block;font-size:0.8rem;font-weight:600;color:var(--text-main);margin-bottom:0.35rem;">Salida</label>
+          <input type="datetime-local" id="shiftExitInput" value="${defaultExit}" style="width:100%;padding:0.6rem 0.75rem;border:1px solid #e2e8f0;border-radius:8px;font-size:0.9rem;">
+        </div>
+        <div id="shiftErrorMsg" style="color:#dc2626;font-size:0.8rem;display:none;"></div>
+      </div>
+      <div style="display:flex;gap:0.6rem;justify-content:flex-end;margin-top:1.5rem;">
+        <button id="shiftCancelBtn" style="background:none;border:1px solid #e2e8f0;padding:0.55rem 1.1rem;border-radius:8px;cursor:pointer;font-size:0.85rem;color:var(--text-secondary);font-weight:600;">Cancelar</button>
+        <button id="shiftSaveBtn" style="background:#2563eb;color:white;border:none;padding:0.55rem 1.1rem;border-radius:8px;cursor:pointer;font-size:0.85rem;font-weight:700;">${isEdit ? 'Guardar cambios' : 'Crear turno'}</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  document.getElementById('shiftCancelBtn').onclick = () => overlay.remove();
+  document.getElementById('shiftSaveBtn').onclick = async () => {
+    const errEl = document.getElementById('shiftErrorMsg');
+    errEl.style.display = 'none';
+    const entryVal = document.getElementById('shiftEntryInput').value;
+    const exitVal  = document.getElementById('shiftExitInput').value;
+    if (!entryVal || !exitVal) { errEl.textContent = 'Debes rellenar ambas fechas/horas.'; errEl.style.display = 'block'; return; }
+    const entryDate = new Date(entryVal);
+    const exitDate  = new Date(exitVal);
+    if (exitDate <= entryDate) { errEl.textContent = 'La salida debe ser posterior a la entrada.'; errEl.style.display = 'block'; return; }
+
+    const saveBtn = document.getElementById('shiftSaveBtn');
+    saveBtn.disabled = true; saveBtn.textContent = 'Guardando...';
+
+    if (isEdit) {
+      const { error: e1 } = await supabase.from('time_logs').update({ timestamp: entryDate.toISOString() }).eq('id', opts.entryLogId);
+      const { error: e2 } = await supabase.from('time_logs').update({ timestamp: exitDate.toISOString() }).eq('id', opts.exitLogId);
+      if (e1 || e2) { errEl.textContent = 'Error al guardar: ' + ((e1||e2).message); errEl.style.display='block'; saveBtn.disabled=false; saveBtn.textContent='Guardar cambios'; return; }
+    } else {
+      const { error } = await supabase.from('time_logs').insert([
+        { user_id: opts.userId, feria_id: opts.feriaId, action_type: 'Entrada', timestamp: entryDate.toISOString() },
+        { user_id: opts.userId, feria_id: opts.feriaId, action_type: 'Salida',  timestamp: exitDate.toISOString() },
+      ]);
+      if (error) { errEl.textContent = 'Error al crear turno: ' + error.message; errEl.style.display='block'; saveBtn.disabled=false; saveBtn.textContent='Crear turno'; return; }
+    }
+
+    overlay.remove();
+    await app.loadUsers();
+    if (app.state.activeView === 'users') app.renderView('users');
+    const modal = document.getElementById('horasFeriaModal');
+    if (modal) modal.remove();
+    window.showHorasPorFeria(opts.userId, opts.userName, opts.hourlyRate);
+  };
+};
+
+window.deleteShiftAdmin = async function(entryLogId, exitLogId, userId, userName, hourlyRate) {
+  if (!isAdmin) { alert('Solo los administradores pueden eliminar turnos.'); return; }
+  if (!confirm('¿Seguro que quieres eliminar este turno? Se borrarán la entrada y la salida.')) return;
+  const ids = [entryLogId, exitLogId].filter(Boolean);
+  const { error } = await supabase.from('time_logs').delete().in('id', ids);
+  if (error) { alert('Error eliminando el turno: ' + error.message); return; }
+  await app.loadUsers();
+  if (app.state.activeView === 'users') app.renderView('users');
+  const modal = document.getElementById('horasFeriaModal');
+  if (modal) modal.remove();
+  window.showHorasPorFeria(userId, userName, hourlyRate);
 };
 
 app.handleInit();
