@@ -1022,79 +1022,6 @@ const app = {
     `;
   },
 
-  async loadDashboardData() {
-    if (!isAdmin) return;
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    const { data: logs } = await supabase.from('time_logs')
-      .select('*')
-      .gte('timestamp', today.toISOString())
-      .order('timestamp', { ascending: true }); // Orden ascendente para procesar pares entrada-salida
-
-    const dailyActivity = {}; // user_id -> { name, entryTime, exitTime, isFinished, ... }
-    
-    if (this.state.users.length === 0) await this.loadUsers();
-    const { data: feriasList } = await supabase.from('ferias').select('*');
-    const { data: feriaWorkers } = await supabase.from('feria_workers').select('*');
-
-    if (logs) {
-      logs.forEach(log => {
-        const userId = log.user_id;
-        const profile = this.state.users.find(u => u.id === userId);
-        const timeStr = new Date(log.timestamp).toLocaleTimeString('es-ES', {hour: '2-digit', minute:'2-digit'});
-        
-        if (!dailyActivity[userId]) {
-          // Determinar feria activa actual
-          let currentFeriaName = 'General / Sin Feria';
-          if (feriaWorkers && feriasList) {
-            const uAssigns = feriaWorkers.filter(fw => fw.user_id === userId).map(fw => fw.feria_id);
-            const activeOrAssigned = feriasList.filter(f => uAssigns.includes(f.id));
-            if (activeOrAssigned.length > 0) {
-              const currentObj = activeOrAssigned.find(f => {
-                const start = new Date(f.start_date); start.setHours(0,0,0,0);
-                const end = new Date(f.end_date); end.setHours(23,59,59,999);
-                const now = new Date();
-                return now >= start && now <= end;
-              }) || activeOrAssigned[0];
-              currentFeriaName = currentObj.name;
-            }
-          }
-
-          dailyActivity[userId] = {
-            id: userId,
-            name: profile ? profile.name : 'Desconocido',
-            entryTime: log.action_type === 'Entrada' ? timeStr : 'N/A',
-            exitTime: log.action_type === 'Salida' ? timeStr : null,
-            isFinished: log.action_type === 'Salida',
-            latitude: log.latitude,
-            longitude: log.longitude,
-            feria_name: currentFeriaName
-          };
-        } else {
-          // Actualizar registros existentes para el usuario hoy
-          if (log.action_type === 'Entrada') {
-             dailyActivity[userId].entryTime = timeStr;
-             dailyActivity[userId].isFinished = false;
-             dailyActivity[userId].exitTime = null;
-          } else {
-             dailyActivity[userId].exitTime = timeStr;
-             dailyActivity[userId].isFinished = true;
-          }
-          // Siempre guardar la última ubicación conocida
-          if (log.latitude) {
-            dailyActivity[userId].latitude = log.latitude;
-            dailyActivity[userId].longitude = log.longitude;
-          }
-        }
-      });
-    }
-
-    this.state.allTodayLogs = Object.values(dailyActivity).sort((a, b) => {
-      // Ordenar por quién está trabajando ahora o por hora de entrada
-      if (a.isFinished !== b.isFinished) return a.isFinished ? 1 : -1;
-      return a.entryTime.localeCompare(b.entryTime);
-    });
-  },
 
   async loadFeriasData() {
     const { data } = await supabase.from('ferias').select('*').order('start_date', { ascending: true });
@@ -1437,7 +1364,6 @@ window.toggleAllWorkers = function(checkboxName, btnId) {
 };
 
 window.showHorasPorFeria = async function(userId, userName) {
-  // Crear overlay
   const existing = document.getElementById('horasFeriaModal');
   if (existing) existing.remove();
 
@@ -1445,73 +1371,166 @@ window.showHorasPorFeria = async function(userId, userName) {
   overlay.id = 'horasFeriaModal';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(2px);';
   overlay.innerHTML = `
-    <div style="background:white;border-radius:16px;padding:2rem;max-width:580px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.15);">
+    <div style="background:white;border-radius:16px;padding:2rem;max-width:640px;width:100%;max-height:88vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.15);">
       <div style="text-align:center;padding:2rem;color:var(--text-secondary);">Cargando datos...</div>
     </div>`;
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
   document.body.appendChild(overlay);
 
-  // Cargar logs con info de feria
   const { data: logs } = await supabase
     .from('time_logs')
     .select('*, ferias(id, name, start_date, end_date)')
     .eq('user_id', userId)
     .order('timestamp', { ascending: true });
 
-  // Agrupar por feria y calcular horas
-  const feriaMap = {};
-  (logs || []).forEach(log => {
-    const feriaId = log.feria_id || '__sin_feria__';
-    const feriaName = log.ferias?.name || 'Sin feria asignada';
-    const feriaStart = log.ferias?.start_date || null;
-    const feriaEnd = log.ferias?.end_date || null;
-    if (!feriaMap[feriaId]) {
-      feriaMap[feriaId] = { name: feriaName, start: feriaStart, end: feriaEnd, totalMs: 0, lastIn: null, days: new Set() };
-    }
-    const d = feriaMap[feriaId];
-    d.days.add(new Date(log.timestamp).toLocaleDateString('es-ES'));
-    if (log.action_type === 'Entrada') {
-      d.lastIn = new Date(log.timestamp);
-    } else if (log.action_type === 'Salida' && d.lastIn) {
-      d.totalMs += new Date(log.timestamp) - d.lastIn;
-      d.lastIn = null;
-    }
-  });
-
   const fmtMs = ms => {
     const h = Math.floor(ms / 3600000);
     const m = Math.floor((ms % 3600000) / 60000);
     return `${h}h ${m}m`;
   };
+  const fmtTime = d => d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  const fmtDate = d => d.toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
 
-  const entries = Object.entries(feriaMap);
-  const totalMs = entries.reduce((acc, [, f]) => acc + f.totalMs, 0);
+  // Agrupar: feria → día de ENTRADA → turnos.
+  // El día siempre se toma de la hora de Entrada, así un turno
+  // nocturno 22:00→05:00 queda atribuido al día de la entrada.
+  const feriaMap = {};
+  let pendingEntry = null; // { ts, dayKey, feriaId, entryTime }
 
+  (logs || []).forEach(log => {
+    const feriaId   = log.feria_id || '__sin_feria__';
+    const feriaName = log.ferias?.name  || 'Sin feria asignada';
+    const feriaStart = log.ferias?.start_date || null;
+    const feriaEnd   = log.ferias?.end_date   || null;
+
+    if (!feriaMap[feriaId]) {
+      feriaMap[feriaId] = { name: feriaName, start: feriaStart, end: feriaEnd, totalMs: 0, days: {} };
+    }
+
+    if (log.action_type === 'Entrada') {
+      const entryTs = new Date(log.timestamp);
+      const dayKey  = fmtDate(entryTs);
+      pendingEntry  = { ts: entryTs, dayKey, feriaId, entryTime: fmtTime(entryTs) };
+      if (!feriaMap[feriaId].days[dayKey]) {
+        feriaMap[feriaId].days[dayKey] = { totalMs: 0, turnos: [] };
+      }
+
+    } else if (log.action_type === 'Salida' && pendingEntry && pendingEntry.feriaId === feriaId) {
+      const exitTs  = new Date(log.timestamp);
+      const ms      = exitTs - pendingEntry.ts;
+      const exitDay = fmtDate(exitTs);
+      const overnight = exitDay !== pendingEntry.dayKey;
+
+      feriaMap[feriaId].totalMs += ms;
+      if (!feriaMap[feriaId].days[pendingEntry.dayKey]) {
+        feriaMap[feriaId].days[pendingEntry.dayKey] = { totalMs: 0, turnos: [] };
+      }
+      feriaMap[feriaId].days[pendingEntry.dayKey].totalMs += ms;
+      feriaMap[feriaId].days[pendingEntry.dayKey].turnos.push({
+        entryTime: pendingEntry.entryTime,
+        exitTime:  fmtTime(exitTs),
+        ms,
+        overnight,
+        exitDayShort: overnight
+          ? exitTs.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })
+          : null,
+      });
+      pendingEntry = null;
+
+    } else if (log.action_type === 'Salida' && pendingEntry && pendingEntry.feriaId !== feriaId) {
+      pendingEntry = null;
+    }
+  });
+
+  // Turno abierto (sin salida todavía)
+  if (pendingEntry && feriaMap[pendingEntry.feriaId]) {
+    const ms = new Date() - pendingEntry.ts;
+    const f  = feriaMap[pendingEntry.feriaId];
+    f.totalMs += ms;
+    if (!f.days[pendingEntry.dayKey]) f.days[pendingEntry.dayKey] = { totalMs: 0, turnos: [] };
+    f.days[pendingEntry.dayKey].totalMs += ms;
+    f.days[pendingEntry.dayKey].turnos.push({
+      entryTime: pendingEntry.entryTime,
+      exitTime: null, ms, overnight: false, active: true,
+    });
+  }
+
+  const feriaEntries = Object.entries(feriaMap);
+  const totalMs = feriaEntries.reduce((acc, [, f]) => acc + f.totalMs, 0);
   const initials = userName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
 
-  const rows = entries.length > 0
-    ? entries.map(([, f]) => `
-        <tr onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
-          <td style="padding:1rem 1.25rem;">
-            <div style="font-weight:600;color:var(--text-main);">${f.name}</div>
-            ${f.start ? `<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.2rem;">📅 ${f.start} — ${f.end}</div>` : ''}
-          </td>
-          <td style="padding:1rem;text-align:center;color:var(--text-secondary);font-size:0.9rem;">${f.days.size} día${f.days.size !== 1 ? 's' : ''}</td>
-          <td style="padding:1rem 1.25rem;text-align:right;">
-            <span style="font-weight:800;font-size:1.1rem;color:var(--primary);">${fmtMs(f.totalMs)}</span>
-          </td>
-        </tr>
-      `).join('')
-    : `<tr><td colspan="3" style="padding:3rem;text-align:center;color:var(--text-muted);">Este empleado no tiene fichajes registrados.</td></tr>`;
+  const feriaBlocks = feriaEntries.length > 0
+    ? feriaEntries.map(([, f]) => {
+        const dayEntries = Object.entries(f.days).sort((a, b) => {
+          const parse = s => {
+            const parts = s.split(', ')[1]?.split('/') || [];
+            return new Date(parts[2], parts[1] - 1, parts[0]);
+          };
+          return parse(a[0]) - parse(b[0]);
+        });
+
+        const dayRows = dayEntries.map(([dayKey, dayData], idx) => {
+          const rows = dayData.turnos.map(t => {
+            const exitLabel = t.active
+              ? `<span style="color:#f59e0b;font-weight:600;">En turno...</span>`
+              : t.overnight
+                ? `${t.exitTime}&nbsp;<span title="Salida al día siguiente" style="background:#fef3c7;color:#92400e;border-radius:4px;padding:0.1rem 0.35rem;font-size:0.7rem;font-weight:700;">+1 día (${t.exitDayShort})</span>`
+                : t.exitTime;
+            return `
+              <tr style="background:${idx % 2 === 0 ? '#fafafa' : 'white'};">
+                <td style="padding:0.6rem 1rem 0.6rem 2rem;font-size:0.82rem;color:var(--text-secondary);border-bottom:1px solid #f1f5f9;">${dayKey}</td>
+                <td style="padding:0.6rem 0.75rem;font-size:0.85rem;font-weight:600;color:#16a34a;border-bottom:1px solid #f1f5f9;">${t.entryTime}</td>
+                <td style="padding:0.6rem 0.75rem;font-size:0.85rem;border-bottom:1px solid #f1f5f9;">${exitLabel}</td>
+                <td style="padding:0.6rem 1rem 0.6rem 0.75rem;text-align:right;font-weight:700;font-size:0.9rem;color:var(--primary);border-bottom:1px solid #f1f5f9;">${fmtMs(t.ms)}</td>
+              </tr>`;
+          }).join('');
+
+          // Subtotal si hay más de un turno en el mismo día
+          const subtotal = dayData.turnos.length > 1
+            ? `<tr style="background:#eff6ff;">
+                <td colspan="3" style="padding:0.35rem 1rem 0.35rem 2rem;font-size:0.75rem;color:#2563eb;font-weight:600;border-bottom:1px solid #dbeafe;">Total del día</td>
+                <td style="padding:0.35rem 1rem 0.35rem 0.75rem;text-align:right;font-weight:800;font-size:0.82rem;color:#1d4ed8;border-bottom:1px solid #dbeafe;">${fmtMs(dayData.totalMs)}</td>
+               </tr>`
+            : '';
+
+          return rows + subtotal;
+        }).join('');
+
+        return `
+          <div style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:1.25rem;">
+            <div style="background:linear-gradient(90deg,#f8fafc,#f1f5f9);padding:0.9rem 1rem;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e2e8f0;">
+              <div>
+                <div style="font-weight:700;font-size:0.95rem;color:var(--text-main);">📌 ${f.name}</div>
+                ${f.start ? `<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.15rem;">📅 ${f.start} — ${f.end}</div>` : ''}
+              </div>
+              <div style="text-align:right;">
+                <div style="font-weight:800;font-size:1.1rem;color:var(--primary);">${fmtMs(f.totalMs)}</div>
+                <div style="font-size:0.72rem;color:var(--text-secondary);">${dayEntries.length} día${dayEntries.length !== 1 ? 's' : ''}</div>
+              </div>
+            </div>
+            <table style="width:100%;border-collapse:collapse;">
+              <thead>
+                <tr style="background:#f8fafc;">
+                  <th style="padding:0.5rem 1rem 0.5rem 2rem;text-align:left;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Día</th>
+                  <th style="padding:0.5rem 0.75rem;text-align:left;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Entrada</th>
+                  <th style="padding:0.5rem 0.75rem;text-align:left;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Salida</th>
+                  <th style="padding:0.5rem 1rem 0.5rem 0.75rem;text-align:right;font-size:0.72rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #e2e8f0;">Horas</th>
+                </tr>
+              </thead>
+              <tbody>${dayRows}</tbody>
+            </table>
+          </div>`;
+      }).join('')
+    : `<div style="text-align:center;padding:3rem;color:var(--text-muted);">Este empleado no tiene fichajes registrados.</div>`;
 
   const box = overlay.querySelector('div');
   box.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.75rem;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.5rem;">
       <div style="display:flex;align-items:center;gap:1rem;">
         <div style="width:48px;height:48px;background:linear-gradient(135deg,#3b82f6,#2563eb);border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:800;color:white;font-size:1.1rem;flex-shrink:0;">${initials}</div>
         <div>
           <h2 style="font-size:1.3rem;font-weight:800;color:var(--text-main);margin:0;">${userName}</h2>
-          <p style="color:var(--text-secondary);font-size:0.85rem;margin:0.2rem 0 0;">Horas trabajadas por feria</p>
+          <p style="color:var(--text-secondary);font-size:0.85rem;margin:0.2rem 0 0;">Horas por feria y día</p>
         </div>
       </div>
       <button onclick="document.getElementById('horasFeriaModal').remove()" style="background:none;border:none;cursor:pointer;padding:0.4rem;border-radius:8px;color:var(--text-secondary);line-height:0;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='none'">
@@ -1519,31 +1538,18 @@ window.showHorasPorFeria = async function(userId, userName) {
       </button>
     </div>
 
-    ${entries.length > 0 ? `
+    ${feriaEntries.length > 0 ? `
     <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #bfdbfe;border-radius:12px;padding:1rem 1.5rem;margin-bottom:1.5rem;display:flex;justify-content:space-between;align-items:center;">
       <div>
         <div style="font-size:0.8rem;font-weight:600;color:#1d4ed8;text-transform:uppercase;letter-spacing:0.05em;">Total acumulado</div>
-        <div style="font-size:0.75rem;color:#3b82f6;margin-top:0.1rem;">${entries.length} feria${entries.length !== 1 ? 's' : ''}</div>
+        <div style="font-size:0.75rem;color:#3b82f6;margin-top:0.1rem;">${feriaEntries.length} feria${feriaEntries.length !== 1 ? 's' : ''}</div>
       </div>
       <div style="font-size:2rem;font-weight:800;color:#1d4ed8;">${fmtMs(totalMs)}</div>
     </div>` : ''}
 
-    <div style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0;">
-            <th style="padding:0.75rem 1.25rem;text-align:left;font-size:0.78rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Feria</th>
-            <th style="padding:0.75rem 1rem;text-align:center;font-size:0.78rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Días</th>
-            <th style="padding:0.75rem 1.25rem;text-align:right;font-size:0.78rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Horas</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows}
-        </tbody>
-      </table>
-    </div>
+    ${feriaBlocks}
 
-    <div style="margin-top:1rem;text-align:center;">
+    <div style="margin-top:0.5rem;text-align:center;">
       <button onclick="document.getElementById('horasFeriaModal').remove()" style="background:none;border:1px solid #e2e8f0;border-radius:8px;padding:0.5rem 1.5rem;cursor:pointer;color:var(--text-secondary);font-size:0.9rem;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='none'">Cerrar</button>
     </div>
   `;
