@@ -104,3 +104,50 @@ CREATE POLICY "Admin update any profile" ON profiles
 
 -- Diagnóstico: ejecuta esto para ver tu estado actual:
 -- SELECT auth.uid(), auth.email(), (SELECT role FROM profiles WHERE id = auth.uid()) AS my_role, public.is_admin() AS am_i_admin;
+
+-- 5. Rol Manager (ej. Adriana): puede ver horas de todos y fichar en kiosk,
+--    pero NO puede editar/eliminar fichajes ni ver tarifas.
+
+-- Función auxiliar para detectar manager
+CREATE OR REPLACE FUNCTION public.is_manager()
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid()
+      AND LOWER(COALESCE(role, '')) = 'manager'
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_manager() TO authenticated;
+
+-- Manager puede ver todos los fichajes (como admin)
+DROP POLICY IF EXISTS "Lectura de registros propios" ON time_logs;
+CREATE POLICY "Lectura de registros propios" ON time_logs
+  FOR SELECT TO authenticated
+  USING (auth.uid() = user_id OR public.is_admin() OR public.is_manager());
+
+-- Manager puede insertar fichajes para cualquier trabajador (kiosk)
+DROP POLICY IF EXISTS "Insertar registros propios o Admin" ON time_logs;
+CREATE POLICY "Insertar registros propios o Admin" ON time_logs
+  FOR INSERT TO authenticated
+  WITH CHECK (auth.uid() = user_id OR public.is_admin() OR public.is_manager());
+
+-- Manager puede ver todos los perfiles (para mostrar directorio de personal)
+DROP POLICY IF EXISTS "Manager select all profiles" ON profiles;
+CREATE POLICY "Manager select all profiles" ON profiles
+  FOR SELECT TO authenticated
+  USING (true);
+
+-- Para asignar a ferias, manager puede ver los workers asignados
+DROP POLICY IF EXISTS "Users view assigned ferias" ON feria_workers;
+CREATE POLICY "Users view assigned ferias" ON feria_workers
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid() OR public.is_admin() OR public.is_manager());
+
+-- Asignar rol Manager a Adriana (cambia el email por el suyo real):
+-- UPDATE profiles SET role = 'Manager' WHERE email = 'adriana@tudominio.com';

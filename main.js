@@ -5,9 +5,11 @@ const currentUser = session?.user;
 
 // â”€â”€ Role Authorization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let isAdmin = false;
+let isManager = false;
 if (currentUser) {
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', currentUser.id).single();
   isAdmin = (profile?.role === 'Admin') || (currentUser.user_metadata?.role === 'Admin') || (currentUser.email === 'macario@duke.com');
+  isManager = !isAdmin && (profile?.role === 'Manager');
 }
 
 const app = {
@@ -159,14 +161,21 @@ const app = {
 
 
   async init() {
-    // Configuración central en modo Kiosco
-
     this.setupGlobalListeners();
     this.injectModal();
     this.injectFeriaModal();
     this.injectWorkersModal();
     this.injectEditFeriaModal();
-    
+
+    // Manager: ocultar vistas restringidas y redirigir a kiosk
+    if (isManager) {
+      document.querySelector('[data-view="dashboard"]')?.closest('a')?.remove() ||
+        document.querySelector('[data-view="dashboard"]')?.remove();
+      document.querySelector('[data-view="manage-ferias"]')?.closest('a')?.remove() ||
+        document.querySelector('[data-view="manage-ferias"]')?.remove();
+      this.state.activeView = 'kiosk';
+    }
+
     await this.loadUsers();
     await this.loadFeriasData();
     if (this.state.activeView === 'kiosk') {
@@ -175,7 +184,7 @@ const app = {
     if (this.state.activeView === 'dashboard') {
       await this.loadDashboardData();
     }
-    
+
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
     const navItem = document.querySelector(`[data-view="${this.state.activeView}"]`);
     if(navItem) navItem.classList.add('active');
@@ -362,6 +371,7 @@ const app = {
   },
 
   async switchView(view) {
+    if (isManager && (view === 'dashboard' || view === 'manage-ferias')) return;
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
     document.querySelector('.sidebar').classList.remove('mobile-open');
     const navItem = document.querySelector(`[data-view="${view}"]`);
@@ -787,15 +797,16 @@ const app = {
   },
 
   getUsersHTML() {
+    const colCount = isAdmin ? 8 : (isManager ? 5 : 6);
     return `
       <div style="margin-bottom:2rem;display:flex;justify-content:space-between;align-items:center;">
         <div>
-          <h1 style="font-size:1.5rem;font-weight:700;">Gestión de Usuarios</h1>
-          <p style="color:var(--text-secondary);">Administra los permisos y accesos.</p>
+          <h1 style="font-size:1.5rem;font-weight:700;">${isManager ? 'Directorio de Personal' : 'Gestión de Usuarios'}</h1>
+          <p style="color:var(--text-secondary);">${isManager ? 'Consulta las horas de cada empleado.' : 'Administra los permisos y accesos.'}</p>
         </div>
-        <button class="btn btn-primary btn-add-user">Añadir Usuario</button>
+        ${isAdmin ? '<button class="btn btn-primary btn-add-user">Añadir Usuario</button>' : ''}
       </div>
-      
+
       ${isAdmin ? `
       <div class="card" style="margin-bottom:2rem;padding:1.5rem;background:#f8fafc;border:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;border-radius:12px;">
         <div>
@@ -817,12 +828,12 @@ const app = {
         <table>
           <thead>
             <tr>
-              <th>Usuario</th><th>Rol</th><th>Estado</th><th>Horas</th>${isAdmin ? '<th>€/hora</th><th>Ganancias</th>' : ''}<th>Último Acceso</th><th>Acciones</th>
+              <th>Usuario</th><th>Rol</th><th>Estado</th><th>Horas</th>${isAdmin ? '<th>€/hora</th><th>Ganancias</th>' : ''}<th>Último Acceso</th>${!isManager ? '<th>Acciones</th>' : ''}
             </tr>
           </thead>
           <tbody>
             ${this.state.users.length === 0
-              ? `<tr><td colspan="${isAdmin ? 8 : 6}" style="text-align:center;color:var(--text-muted);padding:2rem;">No hay usuarios todavía.</td></tr>`
+              ? `<tr><td colspan="${colCount}" style="text-align:center;color:var(--text-muted);padding:2rem;">No hay usuarios todavía.</td></tr>`
               : this.state.users.map(u => this.renderUserRow(u)).join('')
             }
           </tbody>
@@ -864,7 +875,7 @@ const app = {
         <td style="font-weight:700; color:var(--primary);">${user.totalHours}</td>
         ${rateCell}
         <td style="color:var(--text-secondary);">${user.lastAccess}</td>
-        <td onclick="event.stopPropagation()">
+        ${!isManager ? `<td onclick="event.stopPropagation()">
           <button class="btn btn-primary" title="Ver Historial, Horas y GPS" style="padding:0.4rem 0.8rem; font-size:0.75rem; margin-right:0.5rem;" onclick="app.viewUserHistory('${user.id}', '${safeName}')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position:relative;top:2px;margin-right:2px"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
             Historial y GPS
@@ -872,7 +883,7 @@ const app = {
           <button class="btn btn-ghost btn-delete-user" data-id="${user.id}" style="padding:0.4rem;color:var(--error-text);">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
           </button>
-        </td>
+        </td>` : ''}
       </tr>`;
   },
 
