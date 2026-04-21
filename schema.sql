@@ -151,3 +151,6 @@ CREATE POLICY "Users view assigned ferias" ON feria_workers
 
 -- Asignar rol Manager a Adriana (cambia el email por el suyo real):
 -- UPDATE profiles SET role = 'Manager' WHERE email = 'adriana@tudominio.com';
+
+-- 6. Precio por hora personalizado por turno
+ALTER TABLE time_logs ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC;

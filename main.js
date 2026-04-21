@@ -195,7 +195,7 @@ const app = {
 
   async loadUsers() {
     const { data: profiles, error: pError } = await supabase.from('profiles').select('*');
-    const { data: logs, error: lError } = await supabase.from('time_logs').select('user_id, action_type, timestamp, feria_id, ferias(base_hourly_rate)').order('timestamp', { ascending: true });
+    const { data: logs, error: lError } = await supabase.from('time_logs').select('user_id, action_type, timestamp, feria_id, hourly_rate, ferias(base_hourly_rate)').order('timestamp', { ascending: true });
 
     const statsByUser = {};
     if (profiles) {
@@ -210,11 +210,13 @@ const app = {
         if (!uData) return;
         
         if (l.action_type === 'Entrada') {
-          uData.lastIn = { ts: new Date(l.timestamp), rate: l.ferias?.base_hourly_rate };
+          uData.lastIn = { ts: new Date(l.timestamp), logRate: l.hourly_rate, feriaRate: l.ferias?.base_hourly_rate };
         } else if (l.action_type === 'Salida' && uData.lastIn) {
           const ms = new Date(l.timestamp) - uData.lastIn.ts;
           uData.totalMs += ms;
-          const shiftRate = (uData.lastIn.rate > 0) ? uData.lastIn.rate : uData.defaultRate;
+          const shiftRate = uData.lastIn.logRate > 0 ? uData.lastIn.logRate
+            : uData.lastIn.feriaRate > 0 ? uData.lastIn.feriaRate
+            : uData.defaultRate;
           uData.totalEarnings += (ms / 3600000) * shiftRate;
           uData.lastIn = null;
         }
@@ -1507,7 +1509,7 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
     if (log.action_type === 'Entrada') {
       const entryTs = new Date(log.timestamp);
       const dayKey  = fmtDate(entryTs);
-      pendingEntry  = { ts: entryTs, dayKey, feriaId, entryTime: fmtTime(entryTs), entryLogId: log.id };
+      pendingEntry  = { ts: entryTs, dayKey, feriaId, entryTime: fmtTime(entryTs), entryLogId: log.id, shiftRate: log.hourly_rate || null };
       if (!feriaMap[feriaId].days[dayKey]) {
         feriaMap[feriaId].days[dayKey] = { totalMs: 0, turnos: [] };
       }
@@ -1517,8 +1519,12 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
       const ms      = exitTs - pendingEntry.ts;
       const exitDay = fmtDate(exitTs);
       const overnight = exitDay !== pendingEntry.dayKey;
+      const effectiveRate = pendingEntry.shiftRate > 0 ? pendingEntry.shiftRate
+        : feriaMap[feriaId].baseRate > 0 ? feriaMap[feriaId].baseRate
+        : hourlyRate;
 
       feriaMap[feriaId].totalMs += ms;
+      feriaMap[feriaId].totalEarnings = (feriaMap[feriaId].totalEarnings || 0) + (ms / 3600000) * effectiveRate;
       if (!feriaMap[feriaId].days[pendingEntry.dayKey]) {
         feriaMap[feriaId].days[pendingEntry.dayKey] = { totalMs: 0, turnos: [] };
       }
@@ -1526,8 +1532,7 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
       feriaMap[feriaId].days[pendingEntry.dayKey].turnos.push({
         entryTime: pendingEntry.entryTime,
         exitTime:  fmtTime(exitTs),
-        ms,
-        overnight,
+        ms, overnight,
         exitDayShort: overnight
           ? exitTs.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })
           : null,
@@ -1535,6 +1540,8 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
         exitLogId: log.id,
         entryIso: pendingEntry.ts.toISOString(),
         exitIso: exitTs.toISOString(),
+        shiftRate: pendingEntry.shiftRate,
+        effectiveRate,
       });
       pendingEntry = null;
 
@@ -1570,7 +1577,6 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
 
   const feriaBlocks = feriaEntries.length > 0
     ? feriaEntries.map(([feriaId, f]) => {
-        const effectiveRate = f.baseRate > 0 ? f.baseRate : hourlyRate;
         const dayEntries = Object.entries(f.days).sort((a, b) => {
           const parse = s => {
             const parts = s.split(', ')[1]?.split('/') || [];
@@ -1586,9 +1592,12 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
               : t.overnight
                 ? `${t.exitTime}&nbsp;<span title="Salida al día siguiente" style="background:#fef3c7;color:#92400e;border-radius:4px;padding:0.1rem 0.35rem;font-size:0.7rem;font-weight:700;">+1 día (${t.exitDayShort})</span>`
                 : t.exitTime;
+            const rateLabel = t.shiftRate > 0
+              ? `<span style="color:#2563eb;font-weight:700;">${t.shiftRate.toFixed(2)}€</span>`
+              : `<span style="color:#94a3b8;font-size:0.75rem;">${(t.effectiveRate||0).toFixed(2)}€</span>`;
             const actionsCell = isAdmin && !t.active
               ? `<td style="padding:0.6rem 0.75rem;text-align:center;border-bottom:1px solid #f1f5f9;white-space:nowrap;">
-                  <button onclick="window.openShiftModal({mode:'edit',userId:'${userId}',userName:'${userName.replace(/'/g, "\\'")}',hourlyRate:${hourlyRate},feriaId:'${feriaId}',entryLogId:'${t.entryLogId}',exitLogId:'${t.exitLogId}',entryIso:'${t.entryIso}',exitIso:'${t.exitIso}'})" title="Editar turno" style="background:none;border:none;cursor:pointer;padding:0.25rem;border-radius:4px;color:#2563eb;" onmouseover="this.style.background='#dbeafe'" onmouseout="this.style.background='none'">
+                  <button onclick="window.openShiftModal({mode:'edit',userId:'${userId}',userName:'${userName.replace(/'/g, "\\'")}',hourlyRate:${hourlyRate},feriaId:'${feriaId}',entryLogId:'${t.entryLogId}',exitLogId:'${t.exitLogId}',entryIso:'${t.entryIso}',exitIso:'${t.exitIso}',shiftRate:${t.shiftRate||0}})" title="Editar turno" style="background:none;border:none;cursor:pointer;padding:0.25rem;border-radius:4px;color:#2563eb;" onmouseover="this.style.background='#dbeafe'" onmouseout="this.style.background='none'">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                   </button>
                   <button onclick="window.deleteShiftAdmin('${t.entryLogId}','${t.exitLogId}','${userId}','${userName.replace(/'/g, "\\'")}',${hourlyRate})" title="Eliminar turno" style="background:none;border:none;cursor:pointer;padding:0.25rem;border-radius:4px;color:#dc2626;margin-left:0.25rem;" onmouseover="this.style.background='#fee2e2'" onmouseout="this.style.background='none'">
@@ -1603,26 +1612,25 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
                 <td style="padding:0.6rem 1rem 0.6rem 2rem;font-size:0.82rem;color:var(--text-secondary);border-bottom:1px solid #f1f5f9;">${dayKey}</td>
                 <td style="padding:0.6rem 0.75rem;font-size:0.85rem;font-weight:600;color:#16a34a;border-bottom:1px solid #f1f5f9;">${t.entryTime}</td>
                 <td style="padding:0.6rem 0.75rem;font-size:0.85rem;border-bottom:1px solid #f1f5f9;">${exitLabel}</td>
-                <td style="padding:0.6rem 1rem 0.6rem 0.75rem;text-align:right;font-weight:700;font-size:0.9rem;color:var(--primary);border-bottom:1px solid #f1f5f9;">${fmtMs(t.ms)}</td>
-                ${isAdmin ? `<td style="padding:0.6rem 0.75rem;text-align:right;font-weight:700;font-size:0.85rem;color:#16a34a;border-bottom:1px solid #f1f5f9;">${((t.ms / 3600000) * effectiveRate).toFixed(2)} €</td>` : ''}
+                <td style="padding:0.6rem 0.75rem;text-align:right;font-weight:700;font-size:0.9rem;color:var(--primary);border-bottom:1px solid #f1f5f9;">${fmtMs(t.ms)}</td>
+                ${isAdmin ? `<td style="padding:0.6rem 0.75rem;text-align:right;font-size:0.82rem;border-bottom:1px solid #f1f5f9;">${rateLabel}<br><span style="color:#16a34a;font-weight:700;font-size:0.8rem;">${((t.ms/3600000)*(t.effectiveRate||0)).toFixed(2)}€</span></td>` : ''}
                 ${actionsCell}
               </tr>`;
           }).join('');
 
-          // Subtotal si hay más de un turno en el mismo día
+          const dayEarnings = dayData.turnos.reduce((s, t) => s + (t.ms/3600000)*(t.effectiveRate||0), 0);
           const subtotalColspan = isAdmin ? 4 : 3;
           const subtotal = dayData.turnos.length > 1
             ? `<tr style="background:#eff6ff;">
                 <td colspan="${subtotalColspan}" style="padding:0.35rem 1rem 0.35rem 2rem;font-size:0.75rem;color:#2563eb;font-weight:600;border-bottom:1px solid #dbeafe;">Total del día</td>
                 <td style="padding:0.35rem 1rem 0.35rem 0.75rem;text-align:right;font-weight:800;font-size:0.82rem;color:#1d4ed8;border-bottom:1px solid #dbeafe;">${fmtMs(dayData.totalMs)}</td>
-                ${isAdmin ? `<td style="padding:0.35rem 0.75rem;text-align:right;font-weight:800;font-size:0.82rem;color:#16a34a;border-bottom:1px solid #dbeafe;">${((dayData.totalMs / 3600000) * effectiveRate).toFixed(2)} €</td><td style="border-bottom:1px solid #dbeafe;"></td>` : ''}
+                ${isAdmin ? `<td style="padding:0.35rem 0.75rem;text-align:right;font-weight:800;font-size:0.82rem;color:#16a34a;border-bottom:1px solid #dbeafe;">${dayEarnings.toFixed(2)}€</td><td style="border-bottom:1px solid #dbeafe;"></td>` : ''}
                </tr>`
             : '';
 
           return rows + subtotal;
         }).join('');
 
-        const feriaEarnings = (f.totalMs / 3600000) * effectiveRate;
         const isRealFeria = feriaId && feriaId !== '__sin_feria__';
         const addBtn = isAdmin && isRealFeria
           ? `<div style="padding:0.6rem 1rem;background:#fafafa;border-top:1px solid #e2e8f0;text-align:center;">
@@ -1643,7 +1651,7 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
               <div style="text-align:right;">
                 <div style="font-weight:800;font-size:1.1rem;color:var(--primary);">${fmtMs(f.totalMs)}</div>
                 <div style="font-size:0.72rem;color:var(--text-secondary);">${dayEntries.length} día${dayEntries.length !== 1 ? 's' : ''}</div>
-                ${isAdmin && effectiveRate > 0 ? `<div style="margin-top:0.3rem;font-weight:700;font-size:0.9rem;color:#16a34a;">${feriaEarnings.toFixed(2)} €</div>` : ''}
+                ${isAdmin && (f.totalEarnings||0) > 0 ? `<div style="margin-top:0.3rem;font-weight:700;font-size:0.9rem;color:#16a34a;">${(f.totalEarnings||0).toFixed(2)} €</div>` : ''}
               </div>
             </div>
             <table style="width:100%;border-collapse:collapse;">
@@ -1728,8 +1736,9 @@ window.openShiftModal = function(opts) {
   };
 
   const isEdit = opts.mode === 'edit';
-  const defaultEntry = isEdit ? toLocalInput(opts.entryIso) : (opts.feriaStart ? `${opts.feriaStart}T09:00` : '');
-  const defaultExit  = isEdit ? toLocalInput(opts.exitIso)  : (opts.feriaStart ? `${opts.feriaStart}T17:00` : '');
+  const defaultEntry  = isEdit ? toLocalInput(opts.entryIso) : (opts.feriaStart ? `${opts.feriaStart}T09:00` : '');
+  const defaultExit   = isEdit ? toLocalInput(opts.exitIso)  : (opts.feriaStart ? `${opts.feriaStart}T17:00` : '');
+  const defaultRate   = opts.shiftRate > 0 ? opts.shiftRate : (opts.hourlyRate || '');
 
   const overlay = document.createElement('div');
   overlay.id = 'shiftEditModal';
@@ -1753,6 +1762,10 @@ window.openShiftModal = function(opts) {
         <div>
           <label style="display:block;font-size:0.8rem;font-weight:600;color:var(--text-main);margin-bottom:0.35rem;">Salida</label>
           <input type="datetime-local" id="shiftExitInput" value="${defaultExit}" style="width:100%;padding:0.6rem 0.75rem;border:1px solid #e2e8f0;border-radius:8px;font-size:0.9rem;">
+        </div>
+        <div>
+          <label style="display:block;font-size:0.8rem;font-weight:600;color:var(--text-main);margin-bottom:0.35rem;">Precio/hora (€) <span style="font-weight:400;color:var(--text-secondary);">— deja vacío para usar la tarifa por defecto</span></label>
+          <input type="number" id="shiftRateInput" value="${defaultRate}" min="0" step="0.5" placeholder="Ej: 8.50" style="width:100%;padding:0.6rem 0.75rem;border:1px solid #e2e8f0;border-radius:8px;font-size:0.9rem;">
         </div>
         <div id="shiftErrorMsg" style="color:#dc2626;font-size:0.8rem;display:none;"></div>
       </div>
@@ -1778,28 +1791,31 @@ window.openShiftModal = function(opts) {
     const saveBtn = document.getElementById('shiftSaveBtn');
     saveBtn.disabled = true; saveBtn.textContent = 'Guardando...';
 
+    const rateRaw = document.getElementById('shiftRateInput').value.trim().replace(',', '.');
+    const shiftRate = rateRaw !== '' && isFinite(Number(rateRaw)) && Number(rateRaw) >= 0 ? Number(rateRaw) : null;
+
     const fail = msg => { errEl.textContent = msg; errEl.style.display='block'; saveBtn.disabled=false; saveBtn.textContent = isEdit ? 'Guardar cambios' : 'Crear turno'; };
 
     if (isEdit) {
+      const entryUpdate = { timestamp: entryDate.toISOString() };
+      if (shiftRate !== null) entryUpdate.hourly_rate = shiftRate;
+      else entryUpdate.hourly_rate = null;
+
       const { data: d1, error: e1 } = await supabase
-        .from('time_logs')
-        .update({ timestamp: entryDate.toISOString() })
-        .eq('id', opts.entryLogId)
-        .select();
+        .from('time_logs').update(entryUpdate).eq('id', opts.entryLogId).select();
       if (e1) { fail('Error al guardar entrada: ' + e1.message); return; }
       if (!d1 || d1.length === 0) { fail('No se actualizó la entrada. Revisa permisos RLS (ejecuta el bloque 4 de schema.sql en Supabase).'); return; }
 
       const { data: d2, error: e2 } = await supabase
-        .from('time_logs')
-        .update({ timestamp: exitDate.toISOString() })
-        .eq('id', opts.exitLogId)
-        .select();
+        .from('time_logs').update({ timestamp: exitDate.toISOString() }).eq('id', opts.exitLogId).select();
       if (e2) { fail('Error al guardar salida: ' + e2.message); return; }
       if (!d2 || d2.length === 0) { fail('No se actualizó la salida. Revisa permisos RLS.'); return; }
     } else {
+      const entryRow = { user_id: opts.userId, feria_id: opts.feriaId, action_type: 'Entrada', timestamp: entryDate.toISOString() };
+      if (shiftRate !== null) entryRow.hourly_rate = shiftRate;
       const { data, error } = await supabase.from('time_logs').insert([
-        { user_id: opts.userId, feria_id: opts.feriaId, action_type: 'Entrada', timestamp: entryDate.toISOString() },
-        { user_id: opts.userId, feria_id: opts.feriaId, action_type: 'Salida',  timestamp: exitDate.toISOString() },
+        entryRow,
+        { user_id: opts.userId, feria_id: opts.feriaId, action_type: 'Salida', timestamp: exitDate.toISOString() },
       ]).select();
       if (error) { fail('Error al crear turno: ' + error.message); return; }
       if (!data || data.length < 2) { fail('No se crearon los fichajes. Revisa permisos RLS.'); return; }
