@@ -176,14 +176,10 @@ const app = {
       this.state.activeView = 'kiosk';
     }
 
-    await this.loadUsers();
-    await this.loadFeriasData();
-    if (this.state.activeView === 'kiosk') {
-      await this.loadKioskData();
-    }
-    if (this.state.activeView === 'dashboard') {
-      await this.loadDashboardData();
-    }
+    // Carga en paralelo — profiles+ferias al mismo tiempo
+    await Promise.all([this.loadUsers(), this.loadFeriasData()]);
+    if (this.state.activeView === 'kiosk') await this.loadKioskData();
+    if (this.state.activeView === 'dashboard') await this.loadDashboardData();
 
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
     const navItem = document.querySelector(`[data-view="${this.state.activeView}"]`);
@@ -194,8 +190,16 @@ const app = {
   },
 
   async loadUsers() {
-    const { data: profiles, error: pError } = await supabase.from('profiles').select('*');
-    const { data: logs, error: lError } = await supabase.from('time_logs').select('user_id, action_type, timestamp, feria_id, hourly_rate, ferias(base_hourly_rate)').order('timestamp', { ascending: true });
+    // Limitar logs a 2 años atrás — más que suficiente para calcular totales
+    const since = new Date();
+    since.setFullYear(since.getFullYear() - 2);
+    const [{ data: profiles, error: pError }, { data: logs }] = await Promise.all([
+      supabase.from('profiles').select('*'),
+      supabase.from('time_logs')
+        .select('user_id, action_type, timestamp, feria_id, hourly_rate, ferias(base_hourly_rate)')
+        .gte('timestamp', since.toISOString())
+        .order('timestamp', { ascending: true }),
+    ]);
 
     const statsByUser = {};
     if (profiles) {
@@ -380,9 +384,14 @@ const app = {
     if (navItem) navItem.classList.add('active');
     this.state.activeView = view;
 
-    if (view === 'dashboard') await this.loadDashboardData();
-    if (view === 'users') await this.loadUsers();
-    if (view === 'manage-ferias') await this.loadFeriasData();
+    // Solo re-fetch si han pasado más de 30 segundos desde la última carga
+    const now = Date.now();
+    const stale = key => !this.state._lastFetch?.[key] || now - this.state._lastFetch[key] > 30000;
+    const stamp = key => { this.state._lastFetch = this.state._lastFetch || {}; this.state._lastFetch[key] = now; };
+
+    if (view === 'dashboard') { await this.loadDashboardData(); stamp('dashboard'); }
+    if (view === 'users' && stale('users')) { await this.loadUsers(); stamp('users'); }
+    if (view === 'manage-ferias' && stale('ferias')) { await this.loadFeriasData(); stamp('ferias'); }
     if (view === 'kiosk') await this.loadKioskData();
     this.renderView(view);
   },
@@ -496,17 +505,16 @@ const app = {
   },
 
   async loadDashboardData() {
-    if (this.state.users.length === 0) await this.loadUsers();
-
     const filterDate = new Date();
-    filterDate.setDate(filterDate.getDate() - 3); // Obtener 3 días atrás para capturar turnos abiertos
+    filterDate.setDate(filterDate.getDate() - 3);
     filterDate.setHours(0, 0, 0, 0);
-    const { data: logs } = await supabase
-      .from('time_logs')
-      .select('*, ferias(id, name)')
-      .gte('timestamp', filterDate.toISOString())
-      .order('timestamp', { ascending: true });
-
+    const tasks = [
+      supabase.from('time_logs').select('*, ferias(id, name)')
+        .gte('timestamp', filterDate.toISOString())
+        .order('timestamp', { ascending: true }),
+    ];
+    if (this.state.users.length === 0) tasks.push(this.loadUsers());
+    const [{ data: logs }] = await Promise.all(tasks);
     this.state.dashboardLogs = logs || [];
   },
 
