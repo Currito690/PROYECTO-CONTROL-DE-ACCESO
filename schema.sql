@@ -154,3 +154,34 @@ CREATE POLICY "Users view assigned ferias" ON feria_workers
 
 -- 6. Precio por hora personalizado por turno
 ALTER TABLE time_logs ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC;
+
+-- 7. Casetas dentro de cada feria
+CREATE TABLE IF NOT EXISTS casetas (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  feria_id UUID REFERENCES ferias(id) ON DELETE CASCADE NOT NULL,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS caseta_workers (
+  caseta_id UUID REFERENCES casetas(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  PRIMARY KEY (caseta_id, user_id)
+);
+
+ALTER TABLE time_logs ADD COLUMN IF NOT EXISTS caseta_id UUID REFERENCES casetas(id) ON DELETE SET NULL;
+
+ALTER TABLE casetas ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Ver casetas" ON casetas;
+CREATE POLICY "Ver casetas" ON casetas FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Admin manage casetas" ON casetas;
+CREATE POLICY "Admin manage casetas" ON casetas FOR ALL TO authenticated
+  USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+ALTER TABLE caseta_workers ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Ver caseta_workers" ON caseta_workers;
+CREATE POLICY "Ver caseta_workers" ON caseta_workers FOR SELECT TO authenticated
+  USING (user_id = auth.uid() OR public.is_admin() OR public.is_manager());
+DROP POLICY IF EXISTS "Admin manage caseta_workers" ON caseta_workers;
+CREATE POLICY "Admin manage caseta_workers" ON caseta_workers FOR ALL TO authenticated
+  USING (public.is_admin()) WITH CHECK (public.is_admin());

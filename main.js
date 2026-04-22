@@ -642,20 +642,22 @@ const app = {
   },
 
   async loadKioskData() {
-    const { data: ferias } = await supabase.from('ferias').select('*').order('start_date', { ascending: true });
-    this.state.ferias = ferias || [];
-
-    const { data: feriaWorkers } = await supabase.from('feria_workers').select('*');
-    this.state.feriaWorkers = feriaWorkers || [];
-
     const filterDate = new Date();
-    filterDate.setDate(filterDate.getDate() - 3); // Obtener hasta 3 días para ver quién fichó Entrada ayer
+    filterDate.setDate(filterDate.getDate() - 3);
     filterDate.setHours(0,0,0,0);
-    const { data: logs } = await supabase.from('time_logs')
-      .select('*')
-      .gte('timestamp', filterDate.toISOString())
-      .order('timestamp', { ascending: true });
 
+    const [{ data: ferias }, { data: feriaWorkers }, { data: casetas }, { data: casetaWorkers }, { data: logs }] = await Promise.all([
+      supabase.from('ferias').select('*').order('start_date', { ascending: true }),
+      supabase.from('feria_workers').select('*'),
+      supabase.from('casetas').select('*').order('name', { ascending: true }),
+      supabase.from('caseta_workers').select('*'),
+      supabase.from('time_logs').select('*').gte('timestamp', filterDate.toISOString()).order('timestamp', { ascending: true }),
+    ]);
+
+    this.state.ferias = ferias || [];
+    this.state.feriaWorkers = feriaWorkers || [];
+    this.state.casetas = casetas || [];
+    this.state.casetaWorkers = casetaWorkers || [];
     this.state.allTodayLogs = logs || [];
   },
 
@@ -674,17 +676,35 @@ const app = {
     const selectedFeria = this.state.ferias.find(f => f.id === activeFeriaId);
     const isFeriaActive = selectedFeria && selectedFeria.start_date <= todayStr && selectedFeria.end_date >= todayStr;
 
-    // Filtrar trabajadores asignados a la feria seleccionada
-    const assignedWorkerIds = (this.state.feriaWorkers || [])
-      .filter(fw => fw.feria_id === activeFeriaId)
-      .map(fw => fw.user_id);
+    // Casetas de la feria seleccionada
+    const feriaCasetas = (this.state.casetas || []).filter(c => c.feria_id === activeFeriaId);
+    const hasCasetas = feriaCasetas.length > 0;
+
+    // Si la caseta seleccionada no pertenece a la feria actual, resetear
+    if (window.selectedKioskCasetaId && !feriaCasetas.some(c => c.id === window.selectedKioskCasetaId)) {
+      window.selectedKioskCasetaId = '';
+    }
+    const activeCasetaId = window.selectedKioskCasetaId || '';
+
+    // Trabajadores asignados: si hay caseta seleccionada, filtrar por caseta_workers;
+    // si no, caer al comportamiento antiguo (feria_workers)
+    let assignedWorkerIds = [];
+    if (activeCasetaId) {
+      assignedWorkerIds = (this.state.casetaWorkers || [])
+        .filter(cw => cw.caseta_id === activeCasetaId)
+        .map(cw => cw.user_id);
+    } else if (!hasCasetas && activeFeriaId) {
+      assignedWorkerIds = (this.state.feriaWorkers || [])
+        .filter(fw => fw.feria_id === activeFeriaId)
+        .map(fw => fw.user_id);
+    }
+
     const feriaEmployees = activeFeriaId && assignedWorkerIds.length > 0
       ? this.state.users.filter(u => u.role !== 'Admin' && assignedWorkerIds.includes(u.id))
-      : this.state.users.filter(u => u.role !== 'Admin');
-    const noAssignedWorkers = activeFeriaId && assignedWorkerIds.length === 0;
+      : (!hasCasetas && activeFeriaId ? this.state.users.filter(u => u.role !== 'Admin') : []);
+    const noAssignedWorkers = activeFeriaId && (hasCasetas ? activeCasetaId && assignedWorkerIds.length === 0 : assignedWorkerIds.length === 0);
 
-    // Si el trabajador seleccionado no está en la feria actual, resetear
-    if (window.selectedKioskWorkerId && activeFeriaId && assignedWorkerIds.length > 0 && !assignedWorkerIds.includes(window.selectedKioskWorkerId)) {
+    if (window.selectedKioskWorkerId && assignedWorkerIds.length > 0 && !assignedWorkerIds.includes(window.selectedKioskWorkerId)) {
       window.selectedKioskWorkerId = '';
     }
     const activeWorkerId = window.selectedKioskWorkerId || '';
@@ -736,15 +756,34 @@ const app = {
             </div>` : ''}
           </div>
 
-          <!-- 2. Trabajador -->
+          <!-- 2. Caseta (solo si la feria tiene casetas) -->
+          ${hasCasetas ? `
+          <div class="form-group" style="text-align:left; margin-bottom: 2rem;">
+            <label style="font-weight:700; font-size:1.05rem; color:var(--text-main); display:block; margin-bottom:0.75rem;">
+              2. Seleccionar Caseta
+              <span style="font-weight:400; font-size:0.82rem; color:var(--text-secondary); margin-left:0.5rem;">(${feriaCasetas.length} caseta${feriaCasetas.length !== 1 ? 's' : ''} en esta feria)</span>
+            </label>
+            <div style="position:relative;">
+              <select id="kioskCasetaSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskCasetaId = this.value; window.selectedKioskWorkerId = ''; app.renderView('kiosk')">
+                <option value="" disabled ${!activeCasetaId ? 'selected' : ''}>-- Elige una caseta --</option>
+                ${feriaCasetas.map(c => `<option value="${c.id}" ${c.id === activeCasetaId ? 'selected' : ''}>🏠 ${c.name}</option>`).join('')}
+              </select>
+              <div style="position:absolute; right:1.2rem; top:50%; transform:translateY(-50%); pointer-events:none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+            </div>
+          </div>` : ''}
+
+          <!-- ${hasCasetas ? '3' : '2'}. Trabajador -->
+          ${activeFeriaId && (!hasCasetas || activeCasetaId) ? `
           <div class="form-group" style="text-align:left;">
             <label style="font-weight:700; font-size:1.05rem; color:var(--text-main); display:block; margin-bottom:0.75rem;">
-              2. Seleccionar Trabajador
-              ${activeFeriaId && !noAssignedWorkers ? `<span style="font-weight:400; font-size:0.82rem; color:var(--text-secondary); margin-left:0.5rem;">(${feriaEmployees.length} asignado${feriaEmployees.length !== 1 ? 's' : ''} a esta feria)</span>` : ''}
+              ${hasCasetas ? '3' : '2'}. Seleccionar Trabajador
+              ${!noAssignedWorkers ? `<span style="font-weight:400; font-size:0.82rem; color:var(--text-secondary); margin-left:0.5rem;">(${feriaEmployees.length} asignado${feriaEmployees.length !== 1 ? 's' : ''})</span>` : ''}
             </label>
             ${noAssignedWorkers
               ? `<div style="padding:1rem; background:#fefce8; border:1px solid #fde68a; border-radius:8px; color:#92400e; font-size:0.9rem;">
-                  ⚠️ No hay trabajadores asignados a esta feria. Ve a <strong>Gestión de Ferias</strong> para asignarlos.
+                  ⚠️ No hay trabajadores asignados a esta ${hasCasetas ? 'caseta' : 'feria'}. Ve a <strong>Gestión de Ferias</strong> para asignarlos.
                 </div>`
               : `<div style="position:relative;">
                   <select id="kioskWorkerSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskWorkerId = this.value; app.renderView('kiosk')">
@@ -756,12 +795,12 @@ const app = {
                   </div>
                 </div>`
             }
-          </div>
+          </div>` : (hasCasetas && !activeCasetaId ? `<div style="padding:1rem; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; color:#1d4ed8; font-size:0.9rem;">ℹ️ Primero selecciona una caseta.</div>` : '')}
 
-          <!-- 3. Botón Fichar -->
+          <!-- Botón Fichar -->
           <div style="margin-top:3.5rem;">
-            ${activeWorkerId && activeFeriaId
-              ? `<button id="btnPunchAction" class="btn-punch ${isWorking ? 'out' : 'in'}" onclick="window.handlePunch('${isWorking ? 'Salida' : 'Entrada'}', '${activeWorkerId}', '${activeFeriaId}')" style="width:100%; padding:1.25rem; font-size:1.25rem; border-radius:12px; transition:transform 0.1s;">
+            ${activeWorkerId && activeFeriaId && (!hasCasetas || activeCasetaId)
+              ? `<button id="btnPunchAction" class="btn-punch ${isWorking ? 'out' : 'in'}" onclick="window.handlePunch('${isWorking ? 'Salida' : 'Entrada'}', '${activeWorkerId}', '${activeFeriaId}', '${activeCasetaId}')" style="width:100%; padding:1.25rem; font-size:1.25rem; border-radius:12px; transition:transform 0.1s;">
                   <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                   ${isWorking ? 'Fichar SALIDA de ' : 'Fichar ENTRADA de '}<span style="font-weight:800">${this.state.users.find(u=>u.id===activeWorkerId)?.name || ''}</span>
                 </button>
@@ -1108,15 +1147,26 @@ const app = {
 
 
   async loadFeriasData() {
-    const { data } = await supabase.from('ferias').select('*').order('start_date', { ascending: true });
-    this.state.ferias = data || [];
-    
-    // Contar trabajadores
-    const { data: assigns } = await supabase.from('feria_workers').select('feria_id');
+    const [{ data: ferias }, { data: assigns }, { data: casetas }, { data: casetaAssigns }] = await Promise.all([
+      supabase.from('ferias').select('*').order('start_date', { ascending: true }),
+      supabase.from('feria_workers').select('feria_id'),
+      supabase.from('casetas').select('*'),
+      supabase.from('caseta_workers').select('*'),
+    ]);
+
+    this.state.ferias = ferias || [];
+    this.state.casetas = casetas || [];
+    this.state.casetaWorkers = casetaAssigns || [];
+
     const counts = {};
-    if (assigns) assigns.forEach(a => { counts[a.feria_id] = (counts[a.feria_id] || 0) + 1; });
-    
-    this.state.ferias.forEach(f => f.workerCount = counts[f.id] || 0);
+    (assigns || []).forEach(a => { counts[a.feria_id] = (counts[a.feria_id] || 0) + 1; });
+    const casetaCounts = {};
+    (casetas || []).forEach(c => { casetaCounts[c.feria_id] = (casetaCounts[c.feria_id] || 0) + 1; });
+
+    this.state.ferias.forEach(f => {
+      f.workerCount = counts[f.id] || 0;
+      f.casetaCount = casetaCounts[f.id] || 0;
+    });
   },
 
   getManageFeriasHTML() {
@@ -1138,9 +1188,10 @@ const app = {
                 <div class="feria-name">${f.name}</div>
                 <div class="feria-loc">${f.location}</div>
                 ${f.base_hourly_rate > 0 ? `<div style="font-size:0.75rem;color:#16a34a;margin-top:0.25rem;font-weight:700;">💰 ${f.base_hourly_rate} €/h (Tarifa Fija)</div>` : ''}
-                <div style="font-size:0.75rem;color:var(--primary);margin-top:0.25rem;font-weight:600;">👥 ${f.workerCount || 0} Personal Asignado</div>
+                <div style="font-size:0.75rem;color:var(--primary);margin-top:0.25rem;font-weight:600;">👥 ${f.workerCount || 0} Personal Asignado &nbsp;·&nbsp; 🏠 ${f.casetaCount || 0} Caseta${f.casetaCount === 1 ? '' : 's'}</div>
               </div>
               <div style="display:flex; flex-direction:column; gap:0.5rem; align-items:flex-end;">
+                <button class="btn btn-primary" style="background:#7c3aed;padding:0.4rem 0.8rem; font-size:0.75rem; font-weight:600;" onclick="window.openCasetasModal('${f.id}')">Gestionar Casetas</button>
                 <button class="btn btn-primary" style="padding:0.4rem 0.8rem; font-size:0.75rem; font-weight:600;" onclick="app.manageFeriaWorkers('${f.id}')">Gestionar Empleados</button>
                 <button class="btn btn-primary" style="background:#475569; padding:0.4rem 0.8rem; font-size:0.75rem; font-weight:600;" onclick="app.openEditFeriaModal('${f.id}')">Editar Fechas</button>
                 <button class="btn btn-ghost" style="color:var(--error-text); padding:0.4rem 0.8rem; font-size:0.75rem;" onclick="app.deleteFeria('${f.id}')">Borrar Feria</button>
@@ -1425,7 +1476,7 @@ function showGeoBlockedModal() {
   `);
 }
 
-window.handlePunch = async function(type, workerId, feriaId) {
+window.handlePunch = async function(type, workerId, feriaId, casetaId) {
   const btn = document.getElementById('btnPunchAction');
   if(btn) { btn.disabled = true; btn.textContent = 'Obteniendo ubicación...'; }
 
@@ -1439,13 +1490,16 @@ window.handlePunch = async function(type, workerId, feriaId) {
     const lat = position.coords.latitude;
     const lon = position.coords.longitude;
 
-    const { error } = await supabase.from('time_logs').insert({
+    const row = {
       user_id: workerId,
       feria_id: feriaId,
       action_type: type,
       latitude: lat,
-      longitude: lon
-    });
+      longitude: lon,
+    };
+    if (casetaId) row.caseta_id = casetaId;
+
+    const { error } = await supabase.from('time_logs').insert(row);
 
     if (error) {
       alert('Error al fichar en base de datos: ' + error.message);
@@ -1850,6 +1904,158 @@ window.deleteShiftAdmin = async function(entryLogId, exitLogId, userId, userName
   const modal = document.getElementById('horasFeriaModal');
   if (modal) modal.remove();
   window.showHorasPorFeria(userId, userName, hourlyRate);
+};
+
+window.openCasetasModal = async function(feriaId) {
+  if (!isAdmin) { alert('Solo el admin puede gestionar casetas.'); return; }
+  const feria = app.state.ferias.find(f => f.id === feriaId);
+  if (!feria) { alert('Feria no encontrada'); return; }
+
+  const existing = document.getElementById('casetasModal');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'casetasModal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(2px);';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  const render = async () => {
+    const [{ data: casetas }, { data: caseta_workers }] = await Promise.all([
+      supabase.from('casetas').select('*').eq('feria_id', feriaId).order('name', { ascending: true }),
+      supabase.from('caseta_workers').select('*'),
+    ]);
+    const workersByCaseta = {};
+    (caseta_workers || []).forEach(cw => {
+      workersByCaseta[cw.caseta_id] = (workersByCaseta[cw.caseta_id] || 0) + 1;
+    });
+
+    const rows = (casetas || []).map(c => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:0.75rem 1rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:0.5rem;">
+        <div>
+          <div style="font-weight:700;font-size:0.95rem;">🏠 ${c.name}</div>
+          <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.15rem;">👥 ${workersByCaseta[c.id] || 0} empleado${(workersByCaseta[c.id]||0) !== 1 ? 's' : ''} asignado${(workersByCaseta[c.id]||0) !== 1 ? 's' : ''}</div>
+        </div>
+        <div style="display:flex;gap:0.4rem;">
+          <button onclick="window.manageCasetaWorkers('${c.id}','${c.name.replace(/'/g,"\\'")}','${feriaId}')" style="background:#2563eb;color:white;border:none;padding:0.45rem 0.9rem;border-radius:8px;cursor:pointer;font-size:0.78rem;font-weight:600;">Empleados</button>
+          <button onclick="window.deleteCaseta('${c.id}','${feriaId}')" style="background:none;border:1px solid #fecaca;color:#dc2626;padding:0.45rem 0.7rem;border-radius:8px;cursor:pointer;font-size:0.78rem;font-weight:600;">Borrar</button>
+        </div>
+      </div>
+    `).join('');
+
+    overlay.innerHTML = `
+      <div style="background:white;border-radius:16px;padding:1.75rem;max-width:560px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.2);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.25rem;">
+          <div>
+            <h3 style="font-size:1.2rem;font-weight:800;margin:0;">Casetas de ${feria.name}</h3>
+            <p style="font-size:0.82rem;color:var(--text-secondary);margin:0.2rem 0 0;">Crea casetas y asigna empleados a cada una</p>
+          </div>
+          <button onclick="document.getElementById('casetasModal').remove()" style="background:none;border:none;cursor:pointer;padding:0.4rem;color:var(--text-secondary);">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+
+        <div style="margin-bottom:1rem;">
+          ${(casetas||[]).length === 0 ? '<p style="text-align:center;padding:1.5rem;color:var(--text-muted);font-size:0.9rem;">No hay casetas todavía. Crea la primera abajo.</p>' : rows}
+        </div>
+
+        <div style="border-top:1px solid #e2e8f0;padding-top:1rem;">
+          <label style="display:block;font-size:0.85rem;font-weight:700;margin-bottom:0.4rem;">Crear nueva caseta</label>
+          <div style="display:flex;gap:0.5rem;">
+            <input id="newCasetaName" type="text" placeholder="Ej: Caseta 1, Caseta Principal..." style="flex:1;padding:0.6rem 0.8rem;border:1px solid #e2e8f0;border-radius:8px;font-size:0.9rem;">
+            <button onclick="window.addCaseta('${feriaId}')" style="background:#16a34a;color:white;border:none;padding:0.6rem 1.1rem;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.85rem;">+ Añadir</button>
+          </div>
+          <div id="casetaError" style="display:none;color:#dc2626;font-size:0.8rem;margin-top:0.4rem;"></div>
+        </div>
+      </div>
+    `;
+  };
+
+  window._rerenderCasetasModal = render;
+  await render();
+};
+
+window.addCaseta = async function(feriaId) {
+  const input = document.getElementById('newCasetaName');
+  const errEl = document.getElementById('casetaError');
+  const name = (input.value || '').trim();
+  errEl.style.display = 'none';
+  if (!name) { errEl.textContent = 'Escribe un nombre.'; errEl.style.display='block'; return; }
+  const { error } = await supabase.from('casetas').insert({ feria_id: feriaId, name });
+  if (error) { errEl.textContent = 'Error: ' + error.message; errEl.style.display='block'; return; }
+  input.value = '';
+  await app.loadFeriasData();
+  if (app.state.activeView === 'manage-ferias') app.renderView('manage-ferias');
+  if (window._rerenderCasetasModal) await window._rerenderCasetasModal();
+};
+
+window.deleteCaseta = async function(casetaId, feriaId) {
+  if (!confirm('¿Eliminar esta caseta? Los fichajes existentes se mantendrán pero perderán la referencia.')) return;
+  const { error } = await supabase.from('casetas').delete().eq('id', casetaId);
+  if (error) { alert('Error: ' + error.message); return; }
+  await app.loadFeriasData();
+  if (app.state.activeView === 'manage-ferias') app.renderView('manage-ferias');
+  if (window._rerenderCasetasModal) await window._rerenderCasetasModal();
+};
+
+window.manageCasetaWorkers = async function(casetaId, casetaName, feriaId) {
+  if (!isAdmin) return;
+  const existing = document.getElementById('casetaWorkersModal');
+  if (existing) existing.remove();
+
+  const { data: current } = await supabase.from('caseta_workers').select('user_id').eq('caseta_id', casetaId);
+  const assigned = new Set((current || []).map(a => a.user_id));
+  const employees = app.state.users.filter(u => u.role !== 'Admin' && u.role !== 'Manager');
+
+  const overlay = document.createElement('div');
+  overlay.id = 'casetaWorkersModal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.6);z-index:1100;display:flex;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(3px);';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:16px;padding:1.75rem;max-width:460px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.2);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;">
+        <div>
+          <h3 style="font-size:1.1rem;font-weight:800;margin:0;">Empleados de 🏠 ${casetaName}</h3>
+          <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.2rem 0 0;">Marca quienes fichan en esta caseta</p>
+        </div>
+        <button onclick="document.getElementById('casetaWorkersModal').remove()" style="background:none;border:none;cursor:pointer;padding:0.4rem;color:var(--text-secondary);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:0.5rem;">
+        <button type="button" onclick="window.toggleAllWorkers('caseta_workers_cb','toggleAllCasetaBtn')" id="toggleAllCasetaBtn" style="font-size:0.78rem;font-weight:600;color:#2563eb;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:0.3rem 0.75rem;cursor:pointer;">Seleccionar todos</button>
+      </div>
+      <div style="flex:1;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px;padding:0.75rem;background:#f8fafc;display:flex;flex-direction:column;gap:0.5rem;">
+        ${employees.length === 0 ? '<p style="text-align:center;color:var(--text-muted);padding:1rem;font-size:0.9rem;">No hay empleados registrados.</p>' :
+          employees.map(u => `
+            <label style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0.75rem;background:white;border-radius:8px;border:1px solid #e2e8f0;cursor:pointer;">
+              <input type="checkbox" name="caseta_workers_cb" value="${u.id}" ${assigned.has(u.id) ? 'checked' : ''} style="width:16px;height:16px;">
+              <span style="font-weight:600;font-size:0.9rem;">${u.name}</span>
+              <span style="font-size:0.75rem;color:var(--text-secondary);">${u.email}</span>
+            </label>`).join('')
+        }
+      </div>
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem;">
+        <button onclick="document.getElementById('casetaWorkersModal').remove()" style="background:none;border:1px solid #e2e8f0;padding:0.55rem 1.1rem;border-radius:8px;cursor:pointer;font-weight:600;font-size:0.85rem;">Cancelar</button>
+        <button id="saveCasetaWorkersBtn" style="background:#2563eb;color:white;border:none;padding:0.55rem 1.1rem;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.85rem;">Guardar</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  document.getElementById('saveCasetaWorkersBtn').onclick = async () => {
+    const checkboxes = Array.from(document.querySelectorAll('input[name="caseta_workers_cb"]:checked'));
+    const saveBtn = document.getElementById('saveCasetaWorkersBtn');
+    saveBtn.disabled = true; saveBtn.textContent = 'Guardando...';
+    await supabase.from('caseta_workers').delete().eq('caseta_id', casetaId);
+    if (checkboxes.length > 0) {
+      const rows = checkboxes.map(cb => ({ caseta_id: casetaId, user_id: cb.value }));
+      const { error } = await supabase.from('caseta_workers').insert(rows);
+      if (error) { alert('Error: ' + error.message); saveBtn.disabled=false; saveBtn.textContent='Guardar'; return; }
+    }
+    overlay.remove();
+    await app.loadFeriasData();
+    if (window._rerenderCasetasModal) await window._rerenderCasetasModal();
+  };
 };
 
 app.handleInit();
