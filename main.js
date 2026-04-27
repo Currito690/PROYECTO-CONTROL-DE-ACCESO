@@ -284,6 +284,7 @@ const app = {
                   <label>Rol</label>
                   <select id="userRole" class="input-field">
                     <option value="Admin">Admin</option>
+                    <option value="Manager">Manager</option>
                     <option value="Employee" selected>Empleado</option>
                   </select>
                 </div>
@@ -945,7 +946,15 @@ const app = {
             </div>
           </div>
         </td>
-        <td><span class="badge ${roleClass}">${user.role}</span></td>
+        <td onclick="event.stopPropagation()">
+          ${isAdmin ? `
+            <select onchange="window.updateUserRole('${user.id}', this.value)" class="input-field" style="padding:0.3rem 0.5rem;font-size:0.8rem;width:auto;min-width:110px;">
+              <option value="Admin" ${user.role === 'Admin' ? 'selected' : ''}>Admin</option>
+              <option value="Manager" ${user.role === 'Manager' ? 'selected' : ''}>Manager</option>
+              <option value="Employee" ${user.role === 'Employee' ? 'selected' : ''}>Empleado</option>
+            </select>
+          ` : `<span class="badge ${roleClass}">${user.role}</span>`}
+        </td>
         <td><span class="badge ${statusClass}">${user.status}</span></td>
         <td style="font-weight:700; color:var(--primary);">${user.totalHours}</td>
         ${rateCell}
@@ -1952,6 +1961,14 @@ window.showHorasPorFeria = async function(userId, userName, hourlyRate) {
       <button class="btn btn-ghost" onclick="document.getElementById('horasFeriaModal').remove()" style="padding:0.55rem 1.6rem;">Cerrar</button>
     </div>
   `;
+};
+
+window.updateUserRole = async function(userId, newRole) {
+  if (!isAdmin) { alert('Solo los administradores pueden cambiar el rol.'); return; }
+  const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', userId);
+  if (error) { alert('Error cambiando el rol: ' + error.message); return; }
+  await app.loadUsers();
+  if (app.state.activeView === 'users') app.renderView('users');
 };
 
 window.editHourlyRate = async function(userId, userName, currentRate) {
