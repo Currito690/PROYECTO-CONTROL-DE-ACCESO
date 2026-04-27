@@ -277,10 +277,7 @@ const app = {
               <div class="form-group">
                 <label>Nombre Completo</label>
                 <input type="text" id="userFullName" class="input-field" placeholder="Ej. Alex Smith" required>
-              </div>
-              <div class="form-group">
-                <label>Email</label>
-                <input type="email" id="userEmail" class="input-field" placeholder="alex@empresa.com" required>
+                <small style="color: var(--text-secondary); font-size: 0.75rem; display: block; margin-top: 0.4rem;">El correo se generará automáticamente como <strong>nombre@empleado.com</strong></small>
               </div>
               <div class="form-group">
                 <label>Contraseña inicial</label>
@@ -403,7 +400,6 @@ const app = {
 
   async addUser() {
     const name     = document.getElementById('userFullName').value.trim();
-    const email    = document.getElementById('userEmail').value.trim();
     const password = document.getElementById('userPassword').value;
     const role     = document.getElementById('userRole').value;
     const status   = document.getElementById('userStatus').value;
@@ -413,6 +409,21 @@ const app = {
     errEl.style.display = 'none';
     saveBtn.disabled = true;
     saveBtn.textContent = 'Guardando...';
+
+    // Generar email automático: nombre@empleado.com (sin acentos/espacios, en minúsculas)
+    const emailLocal = name
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+    if (!emailLocal) {
+      errEl.textContent = 'El nombre no es válido para generar un correo.';
+      errEl.style.display = 'block';
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Guardar Usuario';
+      return;
+    }
+    const email = `${emailLocal}@empleado.com`;
 
     // Guardar sesión del admin antes de crear usuario
     // (signUp puede reemplazar la sesión activa si no hay confirmación de email)
