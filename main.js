@@ -441,17 +441,13 @@ const app = {
       return;
     }
 
-    // Restaurar sesión del admin si signUp la reemplazó
-    if (adminSession && data.session) {
-      await supabase.auth.setSession({
-        access_token: adminSession.access_token,
-        refresh_token: adminSession.refresh_token
-      });
-    }
-
-    // Insertar perfil en la tabla profiles
+    // Insertar perfil ANTES de restaurar la sesión del admin:
+    // signUp deja al nuevo usuario como sesión activa, y la RLS de profiles
+    // permite auto-inserción (id = auth.uid()), pero no permite que el admin
+    // inserte perfiles ajenos.
+    let profileError = null;
     if (data.user) {
-      const { error: profileError } = await supabase.from('profiles').insert({
+      const res = await supabase.from('profiles').insert({
         id: data.user.id,
         name,
         email,
@@ -459,13 +455,23 @@ const app = {
         status,
         last_access: 'Nunca'
       });
-      if (profileError) {
-        errEl.textContent = 'Usuario creado pero error al guardar perfil: ' + profileError.message;
-        errEl.style.display = 'block';
-        saveBtn.disabled = false;
-        saveBtn.textContent = 'Guardar Usuario';
-        return;
-      }
+      profileError = res.error;
+    }
+
+    // Restaurar sesión del admin si signUp la reemplazó
+    if (adminSession) {
+      await supabase.auth.setSession({
+        access_token: adminSession.access_token,
+        refresh_token: adminSession.refresh_token
+      });
+    }
+
+    if (profileError) {
+      errEl.textContent = 'Usuario creado pero error al guardar perfil: ' + profileError.message;
+      errEl.style.display = 'block';
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Guardar Usuario';
+      return;
     }
 
     saveBtn.disabled = false;
