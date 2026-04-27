@@ -279,10 +279,6 @@ const app = {
                 <input type="text" id="userFullName" class="input-field" placeholder="Ej. Alex Smith" required>
                 <small style="color: var(--text-secondary); font-size: 0.75rem; display: block; margin-top: 0.4rem;">El correo se generará automáticamente como <strong>nombre@empleado.com</strong></small>
               </div>
-              <div class="form-group">
-                <label>Contraseña inicial</label>
-                <input type="password" id="userPassword" class="input-field" placeholder="Mínimo 6 caracteres" required>
-              </div>
               <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                 <div>
                   <label>Rol</label>
@@ -400,7 +396,6 @@ const app = {
 
   async addUser() {
     const name     = document.getElementById('userFullName').value.trim();
-    const password = document.getElementById('userPassword').value;
     const role     = document.getElementById('userRole').value;
     const status   = document.getElementById('userStatus').value;
     const errEl    = document.getElementById('modal-error');
@@ -424,6 +419,9 @@ const app = {
       return;
     }
     const email = `${emailLocal}@empleado.com`;
+
+    // Contraseña aleatoria — los empleados no inician sesión con ella (acceso vía kiosko)
+    const password = crypto.randomUUID() + 'A1!';
 
     // Guardar sesión del admin antes de crear usuario
     // (signUp puede reemplazar la sesión activa si no hay confirmación de email)
