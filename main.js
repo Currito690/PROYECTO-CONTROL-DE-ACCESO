@@ -2196,7 +2196,7 @@ window.manageCasetaWorkers = async function(casetaId, casetaName, feriaId) {
 
   const { data: current } = await supabase.from('caseta_workers').select('user_id').eq('caseta_id', casetaId);
   const assigned = new Set((current || []).map(a => a.user_id));
-  const employees = app.state.users.filter(u => u.role !== 'Admin' && u.role !== 'Manager');
+  const employees = app.state.users.filter(u => u.role !== 'Admin');
 
   const overlay = document.createElement('div');
   overlay.id = 'casetaWorkersModal';
