@@ -704,34 +704,23 @@ const app = {
 
     // Trabajadores asignados: si hay caseta seleccionada, filtrar por caseta_workers;
     // si no, caer al comportamiento antiguo (feria_workers).
-    // El rol Manager (p.ej. Adriana) ve siempre TODOS los empleados sin importar
-    // asignaciones — su dispositivo funciona como kiosko general.
     let assignedWorkerIds = [];
-    if (!isManager) {
-      if (activeCasetaId) {
-        assignedWorkerIds = (this.state.casetaWorkers || [])
-          .filter(cw => cw.caseta_id === activeCasetaId)
-          .map(cw => cw.user_id);
-      } else if (!hasCasetas && activeFeriaId) {
-        assignedWorkerIds = (this.state.feriaWorkers || [])
-          .filter(fw => fw.feria_id === activeFeriaId)
-          .map(fw => fw.user_id);
-      }
-    }
-
-    let feriaEmployees;
-    if (isManager && activeFeriaId) {
-      feriaEmployees = this.state.users.filter(u => u.role !== 'Admin' && u.role !== 'Manager');
-    } else if (activeFeriaId && assignedWorkerIds.length > 0) {
-      feriaEmployees = this.state.users.filter(u => u.role !== 'Admin' && assignedWorkerIds.includes(u.id));
+    if (activeCasetaId) {
+      assignedWorkerIds = (this.state.casetaWorkers || [])
+        .filter(cw => cw.caseta_id === activeCasetaId)
+        .map(cw => cw.user_id);
     } else if (!hasCasetas && activeFeriaId) {
-      feriaEmployees = this.state.users.filter(u => u.role !== 'Admin');
-    } else {
-      feriaEmployees = [];
+      assignedWorkerIds = (this.state.feriaWorkers || [])
+        .filter(fw => fw.feria_id === activeFeriaId)
+        .map(fw => fw.user_id);
     }
-    const noAssignedWorkers = !isManager && activeFeriaId && (hasCasetas ? activeCasetaId && assignedWorkerIds.length === 0 : assignedWorkerIds.length === 0);
 
-    if (window.selectedKioskWorkerId && !isManager && assignedWorkerIds.length > 0 && !assignedWorkerIds.includes(window.selectedKioskWorkerId)) {
+    const feriaEmployees = activeFeriaId && assignedWorkerIds.length > 0
+      ? this.state.users.filter(u => u.role !== 'Admin' && assignedWorkerIds.includes(u.id))
+      : (!hasCasetas && activeFeriaId ? this.state.users.filter(u => u.role !== 'Admin') : []);
+    const noAssignedWorkers = activeFeriaId && (hasCasetas ? activeCasetaId && assignedWorkerIds.length === 0 : assignedWorkerIds.length === 0);
+
+    if (window.selectedKioskWorkerId && assignedWorkerIds.length > 0 && !assignedWorkerIds.includes(window.selectedKioskWorkerId)) {
       window.selectedKioskWorkerId = '';
     }
     const activeWorkerId = window.selectedKioskWorkerId || '';
