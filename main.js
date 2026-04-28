@@ -753,18 +753,13 @@ const app = {
           <!-- 1. Feria -->
           <div class="form-group" style="text-align:left; margin-bottom: 2rem;">
             <label style="font-weight:700; font-size:1.05rem; color:var(--text-main); display:block; margin-bottom:0.75rem;">1. Seleccionar Feria</label>
-            <div style="position:relative;">
-              <select id="kioskFeriaSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskFeriaId = this.value; window.selectedKioskWorkerId = ''; app.renderView('kiosk')">
-                <option value="" disabled ${!activeFeriaId ? 'selected' : ''}>-- Elige una feria --</option>
-                ${this.state.ferias.map(f => {
-                  const isActive = f.start_date <= todayStr && f.end_date >= todayStr;
-                  return `<option value="${f.id}" ${f.id === activeFeriaId ? 'selected' : ''}>${isActive ? '● ' : ''}${f.name}${isActive ? ' (Activa hoy)' : ''}</option>`;
-                }).join('')}
-              </select>
-              <div style="position:absolute; right:1.2rem; top:50%; transform:translateY(-50%); pointer-events:none;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-              </div>
-            </div>
+            <select id="kioskFeriaSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%;" onchange="window.selectedKioskFeriaId = this.value; window.selectedKioskWorkerId = ''; app.renderView('kiosk')">
+              <option value="" disabled ${!activeFeriaId ? 'selected' : ''}>-- Elige una feria --</option>
+              ${this.state.ferias.map(f => {
+                const isActive = f.start_date <= todayStr && f.end_date >= todayStr;
+                return `<option value="${f.id}" ${f.id === activeFeriaId ? 'selected' : ''}>${isActive ? '● ' : ''}${f.name}${isActive ? ' (Activa hoy)' : ''}</option>`;
+              }).join('')}
+            </select>
             ${selectedFeria ? `<div style="margin-top:0.5rem; font-size:0.82rem; color:var(--text-secondary);">
               ${selectedFeria.location ? `📍 ${selectedFeria.location} &nbsp;·&nbsp; ` : ''}
               📅 ${selectedFeria.start_date} — ${selectedFeria.end_date}
@@ -779,15 +774,10 @@ const app = {
               2. Seleccionar Caseta
               <span style="font-weight:400; font-size:0.82rem; color:var(--text-secondary); margin-left:0.5rem;">(${feriaCasetas.length} caseta${feriaCasetas.length !== 1 ? 's' : ''} en esta feria)</span>
             </label>
-            <div style="position:relative;">
-              <select id="kioskCasetaSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskCasetaId = this.value; window.selectedKioskWorkerId = ''; app.renderView('kiosk')">
-                <option value="" disabled ${!activeCasetaId ? 'selected' : ''}>-- Elige una caseta --</option>
-                ${feriaCasetas.map(c => `<option value="${c.id}" ${c.id === activeCasetaId ? 'selected' : ''}>🏠 ${c.name}</option>`).join('')}
-              </select>
-              <div style="position:absolute; right:1.2rem; top:50%; transform:translateY(-50%); pointer-events:none;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-              </div>
-            </div>
+            <select id="kioskCasetaSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%;" onchange="window.selectedKioskCasetaId = this.value; window.selectedKioskWorkerId = ''; app.renderView('kiosk')">
+              <option value="" disabled ${!activeCasetaId ? 'selected' : ''}>-- Elige una caseta --</option>
+              ${feriaCasetas.map(c => `<option value="${c.id}" ${c.id === activeCasetaId ? 'selected' : ''}>🏠 ${c.name}</option>`).join('')}
+            </select>
           </div>` : ''}
 
           <!-- ${hasCasetas ? '3' : '2'}. Trabajador -->
@@ -801,15 +791,10 @@ const app = {
               ? `<div style="padding:1rem; background:#fefce8; border:1px solid #fde68a; border-radius:8px; color:#92400e; font-size:0.9rem;">
                   ⚠️ No hay trabajadores asignados a esta ${hasCasetas ? 'caseta' : 'feria'}. Ve a <strong>Gestión de Ferias</strong> para asignarlos.
                 </div>`
-              : `<div style="position:relative;">
-                  <select id="kioskWorkerSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%; appearance:none; background-color:#f8fafc;" onchange="window.selectedKioskWorkerId = this.value; app.renderView('kiosk')">
+              : `<select id="kioskWorkerSelect" class="input-field" style="padding:1rem; font-size:1.1rem; width:100%;" onchange="window.selectedKioskWorkerId = this.value; app.renderView('kiosk')">
                     <option value="" disabled ${!activeWorkerId ? 'selected' : ''}>-- Elige un empleado --</option>
                     ${feriaEmployees.map(u => `<option value="${u.id}" ${u.id === activeWorkerId ? 'selected' : ''}>${u.name}</option>`).join('')}
-                  </select>
-                  <div style="position:absolute; right:1.2rem; top:50%; transform:translateY(-50%); pointer-events:none;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                  </div>
-                </div>`
+                  </select>`
             }
           </div>` : (hasCasetas && !activeCasetaId ? `<div style="padding:1rem; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; color:#1d4ed8; font-size:0.9rem;">ℹ️ Primero selecciona una caseta.</div>` : '')}
 
