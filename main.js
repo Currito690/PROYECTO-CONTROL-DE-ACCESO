@@ -1662,13 +1662,21 @@ window.handlePunch = async function(type, workerId, feriaId, casetaId) {
     };
     if (casetaId) row.caseta_id = casetaId;
 
-    const { error } = await supabase.from('time_logs').insert(row);
+    // .select() devuelve la fila insertada vía RETURNING (no sujeto a RLS de SELECT)
+    const { data: inserted, error } = await supabase.from('time_logs').insert(row).select();
 
     if (error) {
       alert('Error al fichar en base de datos: ' + error.message);
       if(btn) { btn.disabled = false; btn.textContent = type === 'Entrada' ? 'Fichar ENTRADA' : 'Fichar SALIDA'; }
     } else {
       await app.loadKioskData();
+      // Si la RLS de SELECT no permite a Manager ver logs ajenos, la fila recién
+      // insertada no estará en allTodayLogs — la añadimos localmente para que
+      // el estado "Trabajando/Inactivo" se refleje al instante.
+      const newLog = inserted && inserted[0];
+      if (newLog && !app.state.allTodayLogs.some(l => l.id === newLog.id)) {
+        app.state.allTodayLogs.push(newLog);
+      }
       app.renderView('kiosk');
     }
   }, (_err) => {
